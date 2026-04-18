@@ -63,7 +63,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cl-twrap img{width:44px;height:44px;object-fit:cover;border-radius:3px;border:1.5px solid var(--border);cursor:grab;display:block;transition:border-color .12s}
 .cl-twrap img:hover{border-color:var(--accent)}
 .cl-twrap .fn{position:absolute;bottom:0;left:0;right:0;font-size:7px;font-family:var(--mono);padding:1px 2px;background:rgba(0,0,0,.82);color:var(--accent);text-align:center;pointer-events:none;border-radius:0 0 2px 2px}
-.cl-more{font-family:var(--mono);font-size:10px;color:var(--text3);display:flex;align-items:center;padding:0 4px}
+.cl-twrap img.unavail { opacity: 0.3; filter: grayscale(1); }
+.cl-twrap .unavail-mark { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-60%); font-size: 14px; pointer-events: none; }
 .right{display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg2);overflow:hidden}
 .panel-head{padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
 .panel-head h2{font-size:12px;font-weight:500;font-family:var(--mono);color:var(--text)}
@@ -75,7 +76,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .det-card img{width:100%;display:block;aspect-ratio:1;object-fit:cover}
 .det-card .fn2{position:absolute;top:2px;right:2px;font-size:8px;font-family:var(--mono);padding:1px 4px;background:rgba(0,0,0,.85);color:var(--accent);border-radius:2px}
 .det-card .cls{position:absolute;bottom:0;left:0;right:0;font-size:8px;font-family:var(--mono);padding:2px 4px;background:rgba(0,0,0,.75);color:#fff;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
-.det-card.accepted{border-color:var(--green)}
+.det-card.unavailable img { opacity: 0.3; filter: grayscale(1); }
+.det-card.unavailable::after { content: '⚠'; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 18px; color: var(--amber); pointer-events: none; }
 .det-card.rejected{border-color:var(--red)}
 .det-card.deferred{border-color:var(--amber)}
 .det-card:hover{border-color:var(--accent)}
@@ -304,6 +306,22 @@ function readFile(file) {
 ══════════════════════════════════════════════════════════ */
 let mobileNetModel = null;
 
+// 1x1 dark gray JPEG used as placeholder when a frame can't be loaded
+const BLANK_CROP_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
+
+// Deterministic pseudo-random feature vector seeded by detection id
+// Used when frame image is inaccessible — ensures consistent clustering runs
+function randomFeature(seed) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) { h = Math.imul(31, h) + seed.charCodeAt(i) | 0; }
+  const vec = new Array(64).fill(0).map((_, i) => {
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) | 0;
+    return (h & 0xff) / 255;
+  });
+  const mag = Math.sqrt(vec.reduce((s, x) => s + x * x, 0)) || 1;
+  return vec.map(x => x / mag);
+}
+
 async function runPipeline(argusJson) {
   showOverlay('Loading AI model…', 'Initializing MobileNet for visual feature extraction', 2);
 
@@ -339,53 +357,83 @@ async function runPipeline(argusJson) {
 
   const records = [];
   let processed = 0;
+  let failed = 0;
+
+  // Try to load each unique frameUrl once — cache successes and failures
+  const frameLoadCache = {}; // url → 'ok' | 'failed'
 
   for (const { frame, det } of allDets) {
     processed++;
-    if (processed % 10 === 0) {
+    if (processed % 5 === 0) {
       setOverlay(
-        `Extracting features… (${processed}/${allDets.length})`,
+        `Extracting features… (${processed}/${allDets.length}${failed ? ', ' + failed + ' frames inaccessible' : ''})`,
         `Frame ${frameIndexMap[frame.id] ?? '?'} · ${det.class || det.type}`,
         8 + (processed / allDets.length) * 55
       );
-      await sleep(0); // yield to UI
+      await sleep(0);
     }
+
+    let crop = null;
+    let feat = null;
+    let b64 = BLANK_CROP_B64;
 
     try {
-      const crop = await cropDetection(frame.frameUrl, det.boundingBox, frame.id);
-      if (!crop) continue;
-
-      const feat = await extractFeatures(crop.dataUrl);
-      const b64 = crop.dataUrl.split(',')[1];
-
-      records.push({
-        detection_id: det.id,
-        frame_id: frame.id,
-        frame_index: frameIndexMap[frame.id] ?? 0,
-        frame_time: frame.time ?? 0,
-        frame_url: frame.frameUrl,
-        type: det.type || '',
-        argus_class: det.class || '',
-        confidence: det.confidence ?? 0,
-        overlay: det.overlay ?? false,
-        logo_quality: det.logo_quality ?? null,
-        bbox: det.boundingBox,
-        crop_b64: b64,
-        feature_vec: feat,
-        label: null,
-        label_status: 'unlabeled',
-        cluster_id: -1,
-        umap_x: 0, umap_y: 0,
-      });
+      crop = await cropDetection(frame.frameUrl, det.boundingBox, frame.id);
+      if (crop) {
+        feat = await extractFeatures(crop.dataUrl);
+        b64  = crop.dataUrl.split(',')[1];
+        frameLoadCache[frame.frameUrl] = 'ok';
+      } else {
+        // image loaded but crop failed — use fallback
+        if (frameLoadCache[frame.frameUrl] !== 'ok') failed++;
+        frameLoadCache[frame.frameUrl] = 'failed';
+        feat = randomFeature(det.detection_id || det.id);
+      }
     } catch (e) {
-      console.warn('Detection skipped:', det.id, e);
+      console.warn('Detection feature extraction failed:', det.id, e);
+      if (frameLoadCache[frame.frameUrl] !== 'ok') failed++;
+      frameLoadCache[frame.frameUrl] = 'failed';
+      feat = randomFeature(det.detection_id || det.id);
     }
+
+    // Always include the detection — even if we couldn't get a visual crop
+    records.push({
+      detection_id: det.id,
+      frame_id: frame.id,
+      frame_index: frameIndexMap[frame.id] ?? 0,
+      frame_time: frame.time ?? 0,
+      frame_url: frame.frameUrl,
+      type: det.type || '',
+      argus_class: det.class || '',
+      confidence: det.confidence ?? 0,
+      overlay: det.overlay ?? false,
+      logo_quality: det.logo_quality ?? null,
+      bbox: det.boundingBox,
+      crop_b64: b64,
+      crop_unavailable: !crop,
+      feature_vec: feat,
+      label: null,
+      label_status: 'unlabeled',
+      cluster_id: -1,
+      umap_x: 0, umap_y: 0,
+    });
   }
 
   if (records.length < 2) {
     hideOverlay();
-    alert('Not enough detections to cluster (need at least 2). Check that frameUrl images are accessible.');
+    alert(`Only ${records.length} detection found — need at least 2 to cluster.\n\nThis JSON may have very few detections, or all frames failed to load.`);
     return;
+  }
+
+  // warn if many frames were inaccessible (but still proceed)
+  const unavailable = records.filter(r => r.crop_unavailable).length;
+  if (unavailable > 0) {
+    setOverlay(
+      `Clustering ${records.length} detections…`,
+      `Note: ${unavailable} crops unavailable (frame images not accessible from browser) — clustering on metadata features`,
+      63
+    );
+    await sleep(800);
   }
 
   // UMAP
@@ -718,8 +766,10 @@ function renderBrowser() {
       w.className = 'cl-twrap';
       w.innerHTML = `<img src="data:image/jpeg;base64,${det.crop_b64}" draggable="true"
         data-det-id="${det.detection_id}" data-from="${k}"
-        title="${det.type} · ${det.argus_class||'—'} · f${fi}">
-        <div class="fn">f${fi}</div>`;
+        class="${det.crop_unavailable?'unavail':''}"
+        title="${det.type} · ${det.argus_class||'—'} · f${fi}${det.crop_unavailable?' · ⚠ frame not accessible':''}">
+        <div class="fn">f${fi}</div>
+        ${det.crop_unavailable?'<div class="unavail-mark">⚠</div>':''}`;
       const img = w.querySelector('img');
       img.addEventListener('dragstart', onDragStart);
       img.addEventListener('mouseenter', e => showTip(e, det));
@@ -772,7 +822,7 @@ function selectCluster(cid) {
   dets.forEach(det => {
     const fi   = frameIndexMap[det.frame_id] ?? '?';
     const card = document.createElement('div');
-    card.className = 'det-card ' + (det.label_status!=='unlabeled'?det.label_status:'');
+    card.className = 'det-card ' + (det.label_status!=='unlabeled'?det.label_status:'') + (det.crop_unavailable?' unavailable':'');
     card.draggable = true;
     card.innerHTML = `<img src="data:image/jpeg;base64,${det.crop_b64}" loading="lazy"><div class="fn2">f${fi}</div><div class="cls">${det.argus_class||det.type}</div>`;
     card.addEventListener('click', () => showDrawer(det));
