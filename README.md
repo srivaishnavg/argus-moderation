@@ -56,17 +56,25 @@ Detections in rejected / deferred / unlabeled clusters are **left completely unt
 3. Select the repo → Deploy (no build settings needed — it's a static site)
 4. Open the deployed URL
 
-### Option B: Run locally
+### Option B: Run locally (with visual clustering)
 ```bash
-# Just open the HTML file directly — no server needed
-open public/index.html
+# Clone the repo
+git clone https://github.com/Zoomph-Dev/argus-cluster-moderation.git
+cd argus-cluster-moderation
 
-# Or serve with any static server
-npx serve public
-python -m http.server 8080 --directory public
+# Start the local server (proxies CDN images to bypass CORS)
+node server.js
+
+# Open http://localhost:3000
 ```
 
-### Option C: GitHub Pages
+The local server (`server.js`) does two things:
+1. Serves `public/index.html` as a static site
+2. Proxies requests to `cdn.stage.highfive-api.com` through `/proxy?url=...` so the browser can load frame images without CORS errors — enabling real visual (MobileNet) clustering
+
+**Without the proxy server** (e.g. opening `index.html` directly or running from Vercel against staging CDN), the tool falls back to clustering on **bbox geometry + class + confidence metadata**, which still produces useful clusters but is not visually based.
+
+### Option C: Vercel (hosted — metadata clustering only)
 1. Go to repo Settings → Pages
 2. Set source to `main` branch, `/public` folder
 3. Your tool will be live at `https://zoomph-dev.github.io/argus-annotator`

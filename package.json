@@ -1,0 +1,17 @@
+{
+  "name": "argus-cluster-moderation",
+  "version": "3.0.0",
+  "description": "Browser-based cluster annotation tool for Argus logo detection results",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "serve": "npx serve public"
+  },
+  "keywords": ["argus", "annotation", "clustering", "logo-detection", "zoomph"],
+  "author": "Zoomph Dev",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

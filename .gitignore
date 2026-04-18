@@ -18,3 +18,4 @@ npm-debug.log*
 # Local test data — never commit real task JSONs
 *.json
 !vercel.json
+!package.json
