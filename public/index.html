@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Browser-based cluster annotation tool for Argus logo detection results. Cluster, label, and export bounding box detections.">
+<meta property="og:title" content="Argus Cluster Annotator">
+<meta property="og:description" content="Upload an Argus task JSON, visually cluster detections, label them, and export updated Argus JSON.">
+<title>Argus Cluster Annotator — Zoomph</title>
+<!-- TF.js for MobileNet embeddings -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
+<!-- UMAP -->
+<script src="https://cdn.jsdelivr.net/npm/umap-js@1.3.3/lib/umap.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e0f11;--bg2:#151618;--bg3:#1c1e21;--border:#2a2d32;--border2:#383c42;--text:#e8eaed;--text2:#9aa0a8;--text3:#5f6672;--accent:#4f8ef7;--green:#34a853;--red:#ea4335;--amber:#fbbc04;--mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+.topbar{display:flex;align-items:center;gap:10px;padding:0 14px;height:44px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.logo{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent);letter-spacing:.04em}
+.sep{width:1px;height:18px;background:var(--border2)}
+.task-id{font-family:var(--mono);font-size:11px;color:var(--text3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spacer{flex:1}
+.pill{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:3px;border:1px solid var(--border2);color:var(--text2);white-space:nowrap}
+.pill span{color:var(--text);font-weight:500}
+.btn{font-family:var(--mono);font-size:11px;padding:5px 12px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{background:var(--bg3);color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{opacity:.88}
+.btn.success{background:#1a3d26;border-color:#2d6b42;color:var(--green)}
+.btn.success:hover{background:#1f4a2e}
+.shell{display:flex;flex-direction:column;height:100vh}
+.main{display:grid;grid-template-columns:1fr 340px;flex:1;overflow:hidden}
+.left{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.left-toolbar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.search-input{font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:3px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none;width:180px}
+.search-input:focus{border-color:var(--accent)}
+.hint-text{font-family:var(--mono);font-size:10px;color:var(--text3)}
+.cluster-browser{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px}
+.cluster-browser::-webkit-scrollbar{width:4px}
+.cluster-browser::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.cl-card{border:1.5px solid var(--border);border-radius:6px;background:var(--bg2);transition:border-color .15s}
+.cl-card:hover{border-color:var(--border2)}
+.cl-card.selected{border-color:var(--accent)!important}
+.cl-card.drop-target{border-color:var(--green)!important;background:#0a1f12}
+.cl-card.accepted-card{border-color:#2d6b42}
+.cl-card.rejected-card{border-color:#6b2d2d}
+.cl-card.deferred-card{border-color:#6b561a}
+.cl-head{display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border)}
+.cl-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.cl-name{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--text);flex:1}
+.cl-lbl{font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:2px;background:#1a3d26;color:var(--green);border:1px solid #2d6b42;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-lbl.rej{background:#3d1a1a;color:var(--red);border-color:#6b2d2d}
+.cl-lbl.def{background:#3d320e;color:var(--amber);border-color:#6b561a}
+.cl-count{font-family:var(--mono);font-size:10px;color:var(--text3);white-space:nowrap}
+.cl-actions{display:flex;gap:3px;margin-left:4px}
+.cl-btn{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;transition:all .12s;white-space:nowrap}
+.cl-btn:hover{color:var(--text);background:var(--bg3)}
+.cl-btn.to-noise:hover{color:var(--red);border-color:var(--red)}
+.cl-thumbs{display:flex;flex-wrap:wrap;gap:3px;padding:6px 8px;min-height:44px}
+.cl-twrap{position:relative;width:44px;height:44px;flex-shrink:0}
+.cl-twrap img{width:44px;height:44px;object-fit:cover;border-radius:3px;border:1.5px solid var(--border);cursor:grab;display:block;transition:border-color .12s}
+.cl-twrap img:hover{border-color:var(--accent)}
+.cl-twrap .fn{position:absolute;bottom:0;left:0;right:0;font-size:7px;font-family:var(--mono);padding:1px 2px;background:rgba(0,0,0,.82);color:var(--accent);text-align:center;pointer-events:none;border-radius:0 0 2px 2px}
+.cl-more{font-family:var(--mono);font-size:10px;color:var(--text3);display:flex;align-items:center;padding:0 4px}
+.right{display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg2);overflow:hidden}
+.panel-head{padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-head h2{font-size:12px;font-weight:500;font-family:var(--mono);color:var(--text)}
+.panel-head p{font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
+.detail-grid{flex:1;overflow-y:auto;padding:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:5px;align-content:start}
+.detail-grid::-webkit-scrollbar{width:4px}
+.detail-grid::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.det-card{border-radius:4px;border:1.5px solid var(--border);overflow:hidden;cursor:pointer;position:relative;transition:border-color .12s}
+.det-card img{width:100%;display:block;aspect-ratio:1;object-fit:cover}
+.det-card .fn2{position:absolute;top:2px;right:2px;font-size:8px;font-family:var(--mono);padding:1px 4px;background:rgba(0,0,0,.85);color:var(--accent);border-radius:2px}
+.det-card .cls{position:absolute;bottom:0;left:0;right:0;font-size:8px;font-family:var(--mono);padding:2px 4px;background:rgba(0,0,0,.75);color:#fff;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.det-card.accepted{border-color:var(--green)}
+.det-card.rejected{border-color:var(--red)}
+.det-card.deferred{border-color:var(--amber)}
+.det-card:hover{border-color:var(--accent)}
+.det-drawer{border-top:1px solid var(--border);background:var(--bg3);font-family:var(--mono);font-size:10px;display:none;flex-direction:column;gap:3px;padding:8px 12px;max-height:195px;overflow-y:auto;flex-shrink:0}
+.det-drawer.open{display:flex}
+.dr-row{display:flex;gap:6px;align-items:baseline}
+.dr-key{color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.05em;width:70px;flex-shrink:0}
+.dr-val{color:var(--text);font-size:10px;word-break:break-all}
+.dr-val a{color:var(--accent);text-decoration:none}
+.dr-val a:hover{text-decoration:underline}
+.dr-close{align-self:flex-end;color:var(--text3);cursor:pointer}
+.dr-close:hover{color:var(--text)}
+.dr-move{display:flex;align-items:center;gap:5px;margin-top:4px;flex-wrap:wrap}
+.dr-sel{font-family:var(--mono);font-size:10px;padding:3px 6px;border-radius:3px;border:1px solid var(--border2);background:var(--bg2);color:var(--text);outline:none;flex:1;min-width:0}
+.dr-sel:focus{border-color:var(--accent)}
+.dr-mbtn{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:3px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;white-space:nowrap}
+.dr-mbtn:hover{background:var(--accent);color:#fff}
+.action-bar{padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:7px;flex-shrink:0}
+.field-label{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
+.text-input{width:100%;font-family:var(--mono);font-size:11px;padding:6px 9px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none;transition:border-color .12s}
+.text-input:focus{border-color:var(--accent)}
+.text-input::placeholder{color:var(--text3)}
+.action-btns{display:flex;gap:5px}
+.action-btns .btn{flex:1;text-align:center;padding:5px 4px}
+.btn.accept{background:#1a3d26;border-color:#2d6b42;color:var(--green)}
+.btn.accept:hover{background:#1f4a2e}
+.btn.reject{background:#3d1a1a;border-color:#6b2d2d;color:var(--red)}
+.btn.reject:hover{background:#4a1f1f}
+.btn.defer{background:#3d320e;border-color:#6b561a;color:var(--amber)}
+.btn.defer:hover{background:#4a3c10}
+.btn.mrg{border-color:var(--amber);color:var(--amber)}
+.btn.mrg:hover{background:#3d320e}
+.merge-row{display:flex;gap:6px;align-items:center}
+.merge-sel{font-family:var(--mono);font-size:11px;padding:5px 7px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none;flex:1}
+.merge-sel:focus{border-color:var(--amber)}
+
+/* ── processing overlay ── */
+.overlay{position:fixed;inset:0;z-index:300;background:rgba(14,15,17,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.overlay.hidden{display:none}
+.ov-title{font-family:var(--mono);font-size:14px;color:var(--text);font-weight:500}
+.ov-sub{font-family:var(--mono);font-size:11px;color:var(--text3);text-align:center;max-width:360px;line-height:1.6}
+.ov-bar-wrap{width:320px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.ov-bar{height:100%;background:var(--accent);border-radius:2px;transition:width .3s;width:0%}
+.ov-step{font-family:var(--mono);font-size:10px;color:var(--text3)}
+
+/* ── upload screen ── */
+.upload-screen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+.upload-logo{font-family:var(--mono);font-size:20px;color:var(--accent);letter-spacing:.06em}
+.upload-sub{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.drop-zone{width:400px;padding:36px 30px;border:1px dashed var(--border2);border-radius:8px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;display:flex;flex-direction:column;align-items:center;gap:10px}
+.drop-zone:hover,.drop-zone.drag{border-color:var(--accent);background:rgba(79,142,247,.05)}
+.drop-zone input{display:none}
+.drop-zone h3{font-size:13px;font-weight:500;color:var(--text)}
+.drop-zone p{font-size:11px;color:var(--text3);line-height:1.6}
+.drop-zone .also{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:4px}
+.params-row{display:flex;gap:12px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--text2)}
+.params-row label{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.params-row input[type=number]{width:60px;font-family:var(--mono);font-size:11px;padding:4px 6px;border-radius:3px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none}
+.params-row input[type=number]:focus{border-color:var(--accent)}
+
+/* ── tip ── */
+.tip{position:fixed;z-index:500;pointer-events:none;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--text2);display:none;width:230px;overflow:hidden}
+.tip-img{width:100%;height:100px;object-fit:cover;display:block;border-bottom:1px solid var(--border)}
+.tip-body{padding:7px 9px;display:flex;flex-direction:column;gap:3px}
+.tip-row{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.tip-key{color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+.tip-val{color:var(--text);font-size:10px;text-align:right;word-break:break-all}
+.tip-url{color:var(--text3);font-size:9px;padding:4px 9px;border-top:1px solid var(--border);word-break:break-all;line-height:1.4}
+
+/* ── ctx ── */
+.ctx-menu{position:fixed;z-index:400;background:var(--bg2);border:1px solid var(--border2);border-radius:5px;padding:4px 0;font-family:var(--mono);font-size:11px;display:none;min-width:185px;box-shadow:0 4px 16px rgba(0,0,0,.55)}
+.ctx-menu.open{display:block}
+.ctx-item{padding:6px 12px;cursor:pointer;color:var(--text2);display:flex;align-items:center;gap:8px;transition:background .1s,color .1s}
+.ctx-item:hover{background:var(--bg3);color:var(--text)}
+.ctx-item.danger:hover{background:#3d1a1a;color:var(--red)}
+.ctx-sep{height:1px;background:var(--border);margin:3px 0}
+.ctx-head{padding:3px 12px;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.07em}
+.ctx-sub{max-height:130px;overflow-y:auto}
+
+/* ── drag ghost ── */
+#drag-ghost{position:fixed;pointer-events:none;z-index:999;width:52px;height:52px;border-radius:4px;overflow:hidden;border:2px solid var(--accent);display:none}
+#drag-ghost img{width:100%;height:100%;object-fit:cover}
+
+.progress-bar{height:2px;background:var(--border);flex-shrink:0}
+.progress-fill{height:100%;background:var(--accent);transition:width .3s}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:6px;color:var(--text3);font-family:var(--mono);font-size:11px;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- UPLOAD SCREEN -->
+<div class="upload-screen" id="upload-screen">
+  <div class="upload-logo">ARGUS / ANNOTATOR</div>
+  <div class="upload-sub">unified cluster annotation tool · v3.0</div>
+  <label class="drop-zone" id="drop-zone">
+    <input type="file" id="file-input" accept=".json">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4f8ef7" stroke-width="1.5" opacity=".5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>
+    <h3>Drop Argus task JSON here</h3>
+    <p>Accepts raw Argus task export JSON<br>or enriched JSON from a previous session</p>
+    <div class="also">MobileNet + UMAP + HDBSCAN · runs in-browser · no server needed</div>
+  </label>
+  <div class="params-row">
+    <label>min cluster size<input type="number" id="param-min-cluster" value="2" min="2" max="20"></label>
+    <label>umap neighbors<input type="number" id="param-neighbors" value="5" min="2" max="30"></label>
+  </div>
+</div>
+
+<!-- PROCESSING OVERLAY -->
+<div class="overlay hidden" id="overlay">
+  <div class="ov-title" id="ov-title">Processing…</div>
+  <div class="ov-bar-wrap"><div class="ov-bar" id="ov-bar"></div></div>
+  <div class="ov-step" id="ov-step">starting</div>
+  <div class="ov-sub" id="ov-sub"></div>
+</div>
+
+<!-- MAIN APP -->
+<div class="shell" id="app-shell" style="display:none">
+  <div class="topbar">
+    <div class="logo">ARGUS / ANNOTATOR</div>
+    <div class="sep"></div>
+    <div class="task-id" id="task-id-label">—</div>
+    <div class="spacer"></div>
+    <div class="pill">total <span id="st-total">0</span></div>
+    <div class="pill">clusters <span id="st-clusters">0</span></div>
+    <div class="pill" style="border-color:#2d6b42">labeled <span id="st-done" style="color:var(--green)">0</span></div>
+    <div class="pill">noise <span id="st-noise" style="color:var(--text3)">0</span></div>
+    <div class="sep"></div>
+    <button class="btn" onclick="document.getElementById('file-input2').click()">Load new</button>
+    <input type="file" id="file-input2" accept=".json" style="display:none" onchange="loadFile(event)">
+    <button class="btn" onclick="exportEnriched()" title="Download enriched JSON with cluster assignments">↓ enriched JSON</button>
+    <button class="btn success" onclick="exportArgus()" title="Download original Argus JSON with class fields updated to your labels">↓ labeled Argus JSON</button>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  <div class="main">
+    <div class="left">
+      <div class="left-toolbar">
+        <input class="search-input" id="search-input" placeholder="search label or class…" oninput="renderBrowser()">
+        <div class="spacer"></div>
+        <div class="hint-text">drag crops between clusters · right-click for options</div>
+      </div>
+      <div class="cluster-browser" id="cluster-browser"></div>
+    </div>
+    <div class="right">
+      <div class="panel-head">
+        <h2 id="panel-title">select a cluster</h2>
+        <p id="panel-sub">click any cluster · label applies to ALL crops in the cluster</p>
+      </div>
+      <div class="detail-grid" id="detail-grid">
+        <div class="empty-state" style="grid-column:1/-1"><span>◈</span><span>no cluster selected</span></div>
+      </div>
+      <div class="det-drawer" id="det-drawer"></div>
+      <div class="action-bar" id="action-bar" style="display:none">
+        <div>
+          <div class="field-label">label — applies to all crops · sets class in Argus export</div>
+          <input class="text-input" id="label-input" placeholder="e.g. pereira, nike_swoosh, yuengling …">
+        </div>
+        <div class="action-btns">
+          <button class="btn accept" onclick="applyLabel('accepted')">✓ accept</button>
+          <button class="btn reject" onclick="applyLabel('rejected')">✕ reject</button>
+          <button class="btn defer" onclick="applyLabel('deferred')">? defer</button>
+        </div>
+        <div>
+          <div class="field-label">merge this cluster into →</div>
+          <div class="merge-row">
+            <select class="merge-sel" id="merge-select"></select>
+            <button class="btn mrg" onclick="mergeInto()">merge ↗</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="drag-ghost"><img id="drag-ghost-img" src=""></div>
+<div class="tip" id="tooltip"></div>
+<div class="ctx-menu" id="ctx-menu"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════════ */
+let rawArgusJson = null;      // original uploaded Argus JSON (for export)
+let data = null;              // enriched data (detections + clusters)
+let clusters = {}, selectedCluster = null, frameIndexMap = {};
+let dragDet = null;
+
+const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
+  '#f97316','#ec4899','#10b981','#f59e0b','#6366f1','#84cc16','#06b6d4',
+  '#d946ef','#ef4444','#22d3ee','#a3e635','#fb923c','#f472b6','#818cf8'];
+const NOISE_COL = '#5f6672';
+function ccolor(cid) { return +cid === -1 ? NOISE_COL : COLORS[(+cid) % COLORS.length]; }
+
+/* ══════════════════════════════════════════════════════════
+   FILE LOADING
+══════════════════════════════════════════════════════════ */
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); readFile(e.dataTransfer.files[0]); });
+document.getElementById('file-input').addEventListener('change', e => readFile(e.target.files[0]));
+function loadFile(e) { readFile(e.target.files[0]); }
+
+function readFile(file) {
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      // detect if raw Argus JSON or already-enriched
+      if (parsed.detections && parsed.detections[0]?.crop_b64 !== undefined) {
+        // already enriched — skip clustering
+        rawArgusJson = null;
+        initFromEnriched(parsed);
+      } else {
+        // raw Argus JSON — run full pipeline
+        rawArgusJson = parsed;
+        runPipeline(parsed);
+      }
+    } catch(err) { alert('Invalid JSON:\n' + err.message); }
+  };
+  r.readAsText(file);
+}
+
+/* ══════════════════════════════════════════════════════════
+   PIPELINE: RAW ARGUS → ENRICHED
+══════════════════════════════════════════════════════════ */
+let mobileNetModel = null;
+
+async function runPipeline(argusJson) {
+  showOverlay('Loading AI model…', 'Initializing MobileNet for visual feature extraction', 2);
+
+  // Load MobileNet if not already loaded
+  if (!mobileNetModel) {
+    try {
+      mobileNetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
+    } catch(err) {
+      // MobileNet failed — fall back to color histogram features
+      mobileNetModel = null;
+      console.warn('MobileNet load failed, using color histograms:', err);
+    }
+  }
+
+  const frames = argusJson?.result?.frames || [];
+  const sampleRateMs = argusJson?.taskParameters?.sampleRate || 1000;
+  const taskId = argusJson?.taskId || 'unknown';
+  const mediaInfo = argusJson?.result?.mediaInfo || {};
+
+  // build frame index map from time
+  frameIndexMap = {};
+  frames.forEach(fr => { frameIndexMap[fr.id] = Math.round((fr.time || 0) / sampleRateMs); });
+
+  // collect all detections across all frames
+  const allDets = [];
+  frames.forEach(fr => {
+    (fr.detections || []).forEach(det => {
+      allDets.push({ frame: fr, det });
+    });
+  });
+
+  setOverlay('Cropping detections…', `${allDets.length} bounding boxes to process`, 8);
+
+  const records = [];
+  let processed = 0;
+
+  for (const { frame, det } of allDets) {
+    processed++;
+    if (processed % 10 === 0) {
+      setOverlay(
+        `Extracting features… (${processed}/${allDets.length})`,
+        `Frame ${frameIndexMap[frame.id] ?? '?'} · ${det.class || det.type}`,
+        8 + (processed / allDets.length) * 55
+      );
+      await sleep(0); // yield to UI
+    }
+
+    try {
+      const crop = await cropDetection(frame.frameUrl, det.boundingBox, frame.id);
+      if (!crop) continue;
+
+      const feat = await extractFeatures(crop.dataUrl);
+      const b64 = crop.dataUrl.split(',')[1];
+
+      records.push({
+        detection_id: det.id,
+        frame_id: frame.id,
+        frame_index: frameIndexMap[frame.id] ?? 0,
+        frame_time: frame.time ?? 0,
+        frame_url: frame.frameUrl,
+        type: det.type || '',
+        argus_class: det.class || '',
+        confidence: det.confidence ?? 0,
+        overlay: det.overlay ?? false,
+        logo_quality: det.logo_quality ?? null,
+        bbox: det.boundingBox,
+        crop_b64: b64,
+        feature_vec: feat,
+        label: null,
+        label_status: 'unlabeled',
+        cluster_id: -1,
+        umap_x: 0, umap_y: 0,
+      });
+    } catch (e) {
+      console.warn('Detection skipped:', det.id, e);
+    }
+  }
+
+  if (records.length < 2) {
+    hideOverlay();
+    alert('Not enough detections to cluster (need at least 2). Check that frameUrl images are accessible.');
+    return;
+  }
+
+  // UMAP
+  setOverlay('Running UMAP…', `Reducing ${records.length} embeddings to 2D`, 65);
+  await sleep(50);
+
+  const neighbors = Math.min(+document.getElementById('param-neighbors').value || 5, records.length - 1);
+  const coords2d = await runUMAP(records.map(r => r.feature_vec), neighbors);
+  records.forEach((r, i) => { r.umap_x = coords2d[i][0]; r.umap_y = coords2d[i][1]; delete r.feature_vec; });
+
+  // HDBSCAN
+  setOverlay('Clustering…', 'Running HDBSCAN on UMAP coordinates', 82);
+  await sleep(50);
+
+  const minCluster = +document.getElementById('param-min-cluster').value || 2;
+  const labels = hdbscan(coords2d, minCluster);
+  records.forEach((r, i) => { r.cluster_id = labels[i]; });
+
+  const nClusters = new Set(labels.filter(l => l !== -1)).size;
+  const nNoise = labels.filter(l => l === -1).length;
+
+  setOverlay('Done!', `${nClusters} clusters found · ${nNoise} noise points`, 100);
+  await sleep(400);
+
+  const enriched = {
+    task_id: taskId,
+    media_info: mediaInfo,
+    sample_rate_ms: sampleRateMs,
+    n_detections: records.length,
+    n_clusters: nClusters,
+    n_noise: nNoise,
+    detections: records,
+  };
+
+  hideOverlay();
+  initFromEnriched(enriched);
+}
+
+/* ══════════════════════════════════════════════════════════
+   FEATURE EXTRACTION
+══════════════════════════════════════════════════════════ */
+const imgCache = {};
+
+async function cropDetection(frameUrl, bbox, frameId) {
+  // Try to load the frame image
+  let img;
+  try {
+    img = await loadImage(frameUrl);
+  } catch(e) {
+    console.warn('Could not load frame:', frameUrl);
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  const left   = Math.max(0, Math.round(bbox.left));
+  const top    = Math.max(0, Math.round(bbox.top));
+  const right  = Math.min(img.naturalWidth,  Math.round(bbox.right));
+  const bottom = Math.min(img.naturalHeight, Math.round(bbox.bottom));
+  const w = Math.max(1, right - left);
+  const h = Math.max(1, bottom - top);
+
+  canvas.width  = 128;
+  canvas.height = Math.max(1, Math.round(128 * h / w));
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, left, top, w, h, 0, 0, canvas.width, canvas.height);
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.85), w, h };
+}
+
+function loadImage(url) {
+  if (imgCache[url]) return Promise.resolve(imgCache[url]);
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { imgCache[url] = img; res(img); };
+    img.onerror = rej;
+    img.src = url;
+    setTimeout(() => rej(new Error('timeout')), 15000);
+  });
+}
+
+async function extractFeatures(dataUrl) {
+  if (mobileNetModel) {
+    try {
+      const img = await loadImage(dataUrl);
+      const tensor = tf.browser.fromPixels(img).resizeBilinear([224, 224]).expandDims(0).toFloat().div(127.5).sub(1);
+      const embedding = mobileNetModel.infer(tensor, true);
+      const feat = Array.from(await embedding.data());
+      tensor.dispose(); embedding.dispose();
+      return l2norm(feat);
+    } catch(e) {
+      console.warn('MobileNet inference failed, using fallback:', e);
+    }
+  }
+  // Fallback: color histogram from canvas
+  return colorHistogram(dataUrl);
+}
+
+function colorHistogram(dataUrl) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32; canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  img.src = dataUrl;
+  ctx.drawImage(img, 0, 0, 32, 32);
+  const px = ctx.getImageData(0, 0, 32, 32).data;
+  const bins = new Array(48).fill(0);
+  for (let i = 0; i < px.length; i += 4) {
+    bins[Math.floor(px[i]   / 256 * 16)]      += 1; // R
+    bins[Math.floor(px[i+1] / 256 * 16) + 16] += 1; // G
+    bins[Math.floor(px[i+2] / 256 * 16) + 32] += 1; // B
+  }
+  return l2norm(bins);
+}
+
+function l2norm(v) {
+  const mag = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+  return v.map(x => x / mag);
+}
+
+/* ══════════════════════════════════════════════════════════
+   UMAP (using umap-js)
+══════════════════════════════════════════════════════════ */
+async function runUMAP(features, nNeighbors) {
+  // umap-js global is UMAP
+  if (typeof UMAP === 'undefined') {
+    console.warn('umap-js not loaded, using PCA fallback');
+    return pcaFallback(features);
+  }
+  const umap = new UMAP({ nNeighbors, minDist: 0.1, nComponents: 2, random: () => 0.5 });
+  const result = await umap.fitAsync(features, epoch => {
+    if (epoch % 20 === 0) setOverlay(`Running UMAP… (epoch ${epoch})`, '', 65 + epoch / 200 * 15);
+  });
+  return result;
+}
+
+function pcaFallback(features) {
+  // Simple 2D projection via first 2 principal components
+  const n = features.length, d = features[0].length;
+  const mean = new Array(d).fill(0);
+  features.forEach(f => f.forEach((v, i) => mean[i] += v / n));
+  const centered = features.map(f => f.map((v, i) => v - mean[i]));
+  // use first 2 dims as proxy
+  return centered.map(f => [f[0] * 10, f[1] * 10]);
+}
+
+/* ══════════════════════════════════════════════════════════
+   HDBSCAN (lightweight JS implementation)
+══════════════════════════════════════════════════════════ */
+function hdbscan(points, minClusterSize) {
+  const n = points.length;
+  if (n < 2) return points.map(() => -1);
+
+  // 1. compute core distances (kNN density estimate with k=minClusterSize)
+  const k = Math.min(minClusterSize, n - 1);
+  const coreDist = points.map((p, i) => {
+    const dists = points.map((q, j) => i === j ? Infinity : euclidean(p, q));
+    dists.sort((a, b) => a - b);
+    return dists[k - 1];
+  });
+
+  // 2. build mutual reachability graph edges
+  const edges = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const mrd = Math.max(coreDist[i], coreDist[j], euclidean(points[i], points[j]));
+      edges.push([mrd, i, j]);
+    }
+  }
+  edges.sort((a, b) => a[0] - b[0]);
+
+  // 3. build MST via Kruskal's
+  const parent = Array.from({length: n}, (_, i) => i);
+  const rank   = new Array(n).fill(0);
+  function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
+  function union(a, b) {
+    a = find(a); b = find(b);
+    if (a === b) return false;
+    if (rank[a] < rank[b]) [a, b] = [b, a];
+    parent[b] = a; if (rank[a] === rank[b]) rank[a]++;
+    return true;
+  }
+
+  const mstEdges = [];
+  for (const [w, i, j] of edges) {
+    if (union(i, j)) { mstEdges.push([w, i, j]); if (mstEdges.length === n - 1) break; }
+  }
+
+  // 4. build dendrogram by removing MST edges from largest to smallest
+  mstEdges.sort((a, b) => b[0] - a[0]);
+  const labels = new Array(n).fill(-1);
+  let clusterCount = 0;
+  const clusterOf = Array.from({length: n}, (_, i) => i); // initially each point is its own proto-cluster
+  const clusterParent2 = Array.from({length: n}, (_, i) => i);
+
+  function find2(x) { return clusterParent2[x] === x ? x : (clusterParent2[x] = find2(clusterParent2[x])); }
+
+  // reconnect from smallest edge upward, tracking cluster sizes
+  mstEdges.reverse(); // smallest first
+  const clusterSize = new Array(n).fill(1);
+
+  for (const [w, i, j] of mstEdges) {
+    const ci = find2(i), cj = find2(j);
+    if (ci !== cj) {
+      const sz = clusterSize[ci] + clusterSize[cj];
+      // merge into ci
+      clusterParent2[cj] = ci;
+      clusterSize[ci] = sz;
+    }
+  }
+
+  // assign labels: components with >= minClusterSize get a label
+  const compSizes = {};
+  for (let i = 0; i < n; i++) {
+    const root = find2(i);
+    compSizes[root] = (compSizes[root] || 0) + 1;
+  }
+
+  const compLabel = {};
+  for (const [root, sz] of Object.entries(compSizes)) {
+    if (sz >= minClusterSize) { compLabel[root] = clusterCount++; }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const root = find2(i);
+    labels[i] = compLabel[root] !== undefined ? compLabel[root] : -1;
+  }
+
+  return labels;
+}
+
+function euclidean(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) ** 2;
+  return Math.sqrt(s);
+}
+
+/* ══════════════════════════════════════════════════════════
+   INIT FROM ENRICHED DATA
+══════════════════════════════════════════════════════════ */
+function initFromEnriched(d) {
+  data = d;
+  clusters = {};
+  d.detections.forEach(det => {
+    const k = String(det.cluster_id);
+    if (!clusters[k]) clusters[k] = [];
+    clusters[k].push(det);
+  });
+
+  // frame index map
+  frameIndexMap = {};
+  const hasIdx = d.detections.every(det => det.frame_index != null);
+  if (hasIdx) {
+    d.detections.forEach(det => { frameIndexMap[det.frame_id] = det.frame_index; });
+  } else {
+    const srMs = d.sample_rate_ms || 1000;
+    const seen = {};
+    d.detections.forEach(det => { if (det.frame_id != null) seen[det.frame_id] = det.frame_time ?? 0; });
+    Object.entries(seen).forEach(([fid, t]) => { frameIndexMap[fid] = Math.round(t / srMs); });
+  }
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('app-shell').style.display = 'flex';
+  document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
+
+  updateStats();
+  renderBrowser();
+  const first = Object.keys(clusters).filter(k => k !== '-1').sort((a, b) => +a - +b)[0];
+  if (first != null) selectCluster(first);
+}
+
+/* ══════════════════════════════════════════════════════════
+   STATS
+══════════════════════════════════════════════════════════ */
+function updateStats() {
+  const total = data.detections.length;
+  const done  = data.detections.filter(d => d.label_status !== 'unlabeled').length;
+  const noise = (clusters['-1'] || []).length;
+  const nc    = Object.keys(clusters).filter(k => k !== '-1').length;
+  document.getElementById('st-total').textContent    = total;
+  document.getElementById('st-clusters').textContent = nc;
+  document.getElementById('st-done').textContent     = done;
+  document.getElementById('st-noise').textContent    = noise;
+  const pct = total - noise > 0 ? ((done / (total - noise)) * 100).toFixed(0) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+/* ══════════════════════════════════════════════════════════
+   BROWSER
+══════════════════════════════════════════════════════════ */
+const SHOW = 8;
+function renderBrowser() {
+  const browser = document.getElementById('cluster-browser');
+  const q = document.getElementById('search-input').value.trim().toLowerCase();
+  const keys = Object.keys(clusters).sort((a, b) => { if(a==='-1')return 1; if(b==='-1')return -1; return+a-+b; });
+  browser.innerHTML = '';
+
+  keys.forEach(k => {
+    const dets  = clusters[k];
+    const label = dets.find(d => d.label)?.label || '';
+    const status = dets.every(d=>d.label_status==='accepted')?'accepted':dets.every(d=>d.label_status==='rejected')?'rejected':dets.every(d=>d.label_status==='deferred')?'deferred':'mixed';
+    if (q && !label.toLowerCase().includes(q) && !dets.some(d => (d.argus_class||'').toLowerCase().includes(q))) return;
+
+    const col  = ccolor(+k);
+    const card = document.createElement('div');
+    card.className = 'cl-card' + (selectedCluster===k?' selected':'') +
+      (status==='accepted'?' accepted-card':status==='rejected'?' rejected-card':status==='deferred'?' deferred-card':'');
+    card.dataset.cid = k;
+
+    const lblBadge = label ? `<span class="cl-lbl ${status==='rejected'?'rej':status==='deferred'?'def':''}">${label}</span>` : '';
+    const noiseBtn = k !== '-1' ? `<button class="cl-btn to-noise" onclick="moveAllToNoise(event,'${k}')">→ noise</button>` : '';
+
+    card.innerHTML = `
+      <div class="cl-head" data-cid="${k}">
+        <div class="cl-dot" style="background:${col}"></div>
+        <div class="cl-name">${+k===-1?'⊘ noise':'C'+k}</div>
+        ${lblBadge}
+        <div class="cl-count">${dets.length} det${dets.length!==1?'s':''}</div>
+        <div class="cl-actions">${noiseBtn}</div>
+      </div>
+      <div class="cl-thumbs" id="ct-${k}" data-cid="${k}"></div>`;
+
+    browser.appendChild(card);
+    card.querySelector('.cl-head').addEventListener('click', () => selectCluster(k));
+
+    const thumbs = card.querySelector(`#ct-${k}`);
+    dets.slice(0, SHOW).forEach(det => {
+      const fi = frameIndexMap[det.frame_id] ?? '?';
+      const w  = document.createElement('div');
+      w.className = 'cl-twrap';
+      w.innerHTML = `<img src="data:image/jpeg;base64,${det.crop_b64}" draggable="true"
+        data-det-id="${det.detection_id}" data-from="${k}"
+        title="${det.type} · ${det.argus_class||'—'} · f${fi}">
+        <div class="fn">f${fi}</div>`;
+      const img = w.querySelector('img');
+      img.addEventListener('dragstart', onDragStart);
+      img.addEventListener('mouseenter', e => showTip(e, det));
+      img.addEventListener('mouseleave', hideTip);
+      img.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); showCtx(e, det, k); });
+      thumbs.appendChild(w);
+    });
+    if (dets.length > SHOW) {
+      const ov = document.createElement('div');
+      ov.className = 'cl-more';
+      ov.textContent = '+' + (dets.length - SHOW);
+      thumbs.appendChild(ov);
+    }
+
+    [thumbs, card.querySelector('.cl-head')].forEach(el => {
+      el.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drop-target'); });
+      el.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+      el.addEventListener('drop', e => {
+        e.preventDefault(); card.classList.remove('drop-target');
+        if (dragDet && String(dragDet.cluster_id) !== k) moveDet(dragDet.detection_id, String(dragDet.cluster_id), k);
+      });
+    });
+  });
+}
+
+/* ══════════════════════════════════════════════════════════
+   SELECT CLUSTER
+══════════════════════════════════════════════════════════ */
+function selectCluster(cid) {
+  selectedCluster = cid;
+  const dets  = clusters[cid] || [];
+  const label = dets.find(d => d.label)?.label || '';
+  const types = [...new Set(dets.map(d => d.type))].join(', ');
+
+  document.getElementById('panel-title').textContent = (+cid===-1?'⊘ noise':'cluster '+cid) + (label?' · '+label:'');
+  document.getElementById('panel-sub').textContent   = `${dets.length} detections · ${types} · label sets class in Argus export`;
+  document.getElementById('action-bar').style.display = dets.length ? 'flex' : 'none';
+  document.getElementById('label-input').value = label;
+  document.getElementById('det-drawer').classList.remove('open');
+
+  const ms = document.getElementById('merge-select');
+  ms.innerHTML = Object.keys(clusters).filter(k=>k!==cid)
+    .sort((a,b)=>{if(a==='-1')return 1;if(b==='-1')return-1;return+a-+b})
+    .map(k=>{const l=clusters[k].find(d=>d.label)?.label||'';return`<option value="${k}">${+k===-1?'noise':'C'+k}${l?' · '+l:''} (${clusters[k].length})</option>`;}).join('');
+
+  const grid = document.getElementById('detail-grid');
+  grid.innerHTML = '';
+  if (!dets.length) { grid.innerHTML='<div class="empty-state" style="grid-column:1/-1"><span>empty</span></div>'; return; }
+
+  dets.forEach(det => {
+    const fi   = frameIndexMap[det.frame_id] ?? '?';
+    const card = document.createElement('div');
+    card.className = 'det-card ' + (det.label_status!=='unlabeled'?det.label_status:'');
+    card.draggable = true;
+    card.innerHTML = `<img src="data:image/jpeg;base64,${det.crop_b64}" loading="lazy"><div class="fn2">f${fi}</div><div class="cls">${det.argus_class||det.type}</div>`;
+    card.addEventListener('click', () => showDrawer(det));
+    card.addEventListener('dragstart', e => onDetailDrag(e, det));
+    card.addEventListener('mouseenter', e => showTip(e, det));
+    card.addEventListener('mouseleave', hideTip);
+    card.addEventListener('contextmenu', e => { e.preventDefault(); showCtx(e, det, cid); });
+    grid.appendChild(card);
+  });
+
+  document.querySelectorAll('.cl-card').forEach(el => el.classList.toggle('selected', el.dataset.cid===cid));
+}
+
+/* ══════════════════════════════════════════════════════════
+   DRAG & DROP
+══════════════════════════════════════════════════════════ */
+function onDragStart(e) {
+  dragDet = data.detections.find(d => d.detection_id === e.target.dataset.detId);
+  ghostOn(e, e.target.src);
+}
+function onDetailDrag(e, det) {
+  dragDet = det;
+  ghostOn(e, `data:image/jpeg;base64,${det.crop_b64}`);
+}
+function ghostOn(e, src) {
+  const g = document.getElementById('drag-ghost');
+  document.getElementById('drag-ghost-img').src = src;
+  g.style.display = 'block';
+  g.style.left = (e.clientX-26)+'px'; g.style.top = (e.clientY-26)+'px';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setDragImage(new Image(), 0, 0);
+}
+document.addEventListener('dragover', e => {
+  const g = document.getElementById('drag-ghost');
+  if (g.style.display==='block') { g.style.left=(e.clientX-26)+'px'; g.style.top=(e.clientY-26)+'px'; }
+});
+document.addEventListener('dragend', () => { document.getElementById('drag-ghost').style.display='none'; dragDet=null; });
+
+/* ══════════════════════════════════════════════════════════
+   MOVE / MERGE
+══════════════════════════════════════════════════════════ */
+function moveDet(detId, fromCid, toCid) {
+  const det = data.detections.find(d => d.detection_id === detId);
+  if (!det) return;
+  clusters[fromCid] = clusters[fromCid].filter(d => d.detection_id !== detId);
+  if (clusters[fromCid].length === 0) { delete clusters[fromCid]; if (selectedCluster===fromCid) selectedCluster=toCid; }
+  det.cluster_id = +toCid; det.label_status='unlabeled'; det.label=null;
+  if (!clusters[toCid]) clusters[toCid] = [];
+  clusters[toCid].push(det);
+  updateStats(); renderBrowser();
+  if (selectedCluster) selectCluster(selectedCluster);
+}
+
+function moveAllToNoise(e, fromCid) {
+  e.stopPropagation();
+  if (fromCid==='-1') return;
+  if (!clusters['-1']) clusters['-1']=[];
+  (clusters[fromCid]||[]).forEach(det=>{det.cluster_id=-1;det.label_status='unlabeled';det.label=null;clusters['-1'].push(det)});
+  delete clusters[fromCid];
+  if (selectedCluster===fromCid) selectedCluster=null;
+  updateStats(); renderBrowser();
+  if (selectedCluster) selectCluster(selectedCluster);
+}
+
+function mergeInto() {
+  if (!selectedCluster) return;
+  const toCid = document.getElementById('merge-select').value;
+  if (!toCid || toCid===selectedCluster) return;
+  const toLabel = clusters[toCid]?.find(d=>d.label)?.label||null;
+  if (!clusters[toCid]) clusters[toCid]=[];
+  (clusters[selectedCluster]||[]).forEach(det=>{det.cluster_id=+toCid;if(toLabel)det.label=toLabel;clusters[toCid].push(det)});
+  delete clusters[selectedCluster];
+  selectedCluster=toCid;
+  updateStats(); renderBrowser(); selectCluster(toCid);
+}
+
+/* ══════════════════════════════════════════════════════════
+   LABEL
+══════════════════════════════════════════════════════════ */
+function applyLabel(status) {
+  if (!selectedCluster) return;
+  const label = document.getElementById('label-input').value.trim();
+  (clusters[selectedCluster]||[]).forEach(det=>{det.label=label||null;det.label_status=status});
+  updateStats(); renderBrowser(); selectCluster(selectedCluster);
+  const keys = Object.keys(clusters).filter(k=>k!=='-1').sort((a,b)=>+a-+b);
+  const idx  = keys.indexOf(String(selectedCluster));
+  for (let i=idx+1;i<keys.length;i++) {
+    if (clusters[keys[i]].some(d=>d.label_status==='unlabeled')) { setTimeout(()=>selectCluster(keys[i]),80); break; }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   DRAWER
+══════════════════════════════════════════════════════════ */
+function showDrawer(det) {
+  const drawer = document.getElementById('det-drawer');
+  const fi  = frameIndexMap[det.frame_id] ?? '?';
+  const bb  = det.bbox || {};
+  const sc  = det.label_status==='accepted'?'var(--green)':det.label_status==='rejected'?'var(--red)':det.label_status==='deferred'?'var(--amber)':'var(--text3)';
+  const opts = Object.keys(clusters).filter(k=>k!==String(det.cluster_id))
+    .sort((a,b)=>{if(a==='-1')return 1;if(b==='-1')return-1;return+a-+b})
+    .map(k=>{const l=clusters[k].find(d=>d.label)?.label||'';return`<option value="${k}">${+k===-1?'noise':'C'+k}${l?' · '+l:''} (${clusters[k].length})</option>`;}).join('');
+  drawer.innerHTML=`
+    <div class="dr-row" style="justify-content:space-between;margin-bottom:2px">
+      <span style="color:var(--text);font-weight:500">detection · ${det.detection_id.substring(0,14)}…</span>
+      <span class="dr-close" onclick="document.getElementById('det-drawer').classList.remove('open')">✕ close</span>
+    </div>
+    <div class="dr-row"><span class="dr-key">frame</span><span class="dr-val" style="color:var(--accent)">f${fi} · id ${det.frame_id} · t=${det.frame_time??'—'}s</span></div>
+    <div class="dr-row"><span class="dr-key">type</span><span class="dr-val">${det.type}</span></div>
+    <div class="dr-row"><span class="dr-key">argus class</span><span class="dr-val" style="color:var(--accent)">${det.argus_class||'—'}</span></div>
+    <div class="dr-row"><span class="dr-key">confidence</span><span class="dr-val">${(det.confidence*100).toFixed(2)}%</span></div>
+    <div class="dr-row"><span class="dr-key">bbox</span><span class="dr-val">⌈${Math.round(bb.left)},${Math.round(bb.top)}⌉ → ⌊${Math.round(bb.right)},${Math.round(bb.bottom)}⌋</span></div>
+    <div class="dr-row"><span class="dr-key">status</span><span class="dr-val" style="color:${sc}">${det.label_status}${det.label?' · '+det.label:''}</span></div>
+    <div class="dr-row"><span class="dr-key">frame url</span><span class="dr-val"><a href="${det.frame_url}" target="_blank">${(det.frame_url||'').substring(0,42)}…</a></span></div>
+    <div class="dr-move">
+      <span class="dr-key" style="margin-top:0">move to</span>
+      <select class="dr-sel" id="dr-sel">${opts}</select>
+      <button class="dr-mbtn" onclick="moveDet('${det.detection_id}','${selectedCluster}',document.getElementById('dr-sel').value)">move ↗</button>
+    </div>`;
+  drawer.classList.add('open');
+}
+
+/* ══════════════════════════════════════════════════════════
+   TOOLTIP
+══════════════════════════════════════════════════════════ */
+const tip = document.getElementById('tooltip');
+function showTip(e, det) {
+  const fi=frameIndexMap[det.frame_id]??'?', bb=det.bbox||{};
+  tip.innerHTML=`<img class="tip-img" src="data:image/jpeg;base64,${det.crop_b64}"><div class="tip-body">
+    <div class="tip-row"><span class="tip-key">type</span><span class="tip-val">${det.type}</span></div>
+    <div class="tip-row"><span class="tip-key">argus class</span><span class="tip-val" style="color:var(--accent)">${det.argus_class||'—'}</span></div>
+    <div class="tip-row"><span class="tip-key">frame</span><span class="tip-val">f${fi} · t=${det.frame_time??'—'}s</span></div>
+    <div class="tip-row"><span class="tip-key">confidence</span><span class="tip-val">${(det.confidence*100).toFixed(1)}%</span></div>
+    <div class="tip-row"><span class="tip-key">bbox</span><span class="tip-val">⌈${Math.round(bb.left)},${Math.round(bb.top)}⌉ → ⌊${Math.round(bb.right)},${Math.round(bb.bottom)}⌋</span></div>
+  </div><div class="tip-url">${(det.frame_url||'').replace('https://','').substring(0,50)}…</div>`;
+  tip.style.display='block'; posTip(e);
+}
+function hideTip() { tip.style.display='none'; }
+document.addEventListener('mousemove', e => { if(tip.style.display==='block') posTip(e); });
+function posTip(e) {
+  const tw=230,th=220;
+  tip.style.left=(e.clientX+14+tw>window.innerWidth?e.clientX-tw-6:e.clientX+14)+'px';
+  tip.style.top=(e.clientY+th>window.innerHeight?window.innerHeight-th-6:e.clientY-10)+'px';
+}
+
+/* ══════════════════════════════════════════════════════════
+   CTX MENU
+══════════════════════════════════════════════════════════ */
+const ctx=document.getElementById('ctx-menu');
+let ctxDet=null;
+function showCtx(e,det,fromCid){
+  hideTip(); ctxDet=det;
+  const others=Object.keys(clusters).filter(k=>k!==String(det.cluster_id)).sort((a,b)=>{if(a==='-1')return 1;if(b==='-1')return-1;return+a-+b});
+  const items=others.map(k=>{const l=clusters[k].find(d=>d.label)?.label||'',col=ccolor(+k);
+    return`<div class="ctx-item" onclick="moveDet('${det.detection_id}','${fromCid}','${k}');hideCtx()"><span style="color:${col}">●</span>${+k===-1?'noise':'C'+k}${l?' · '+l:''} <span style="color:var(--text3);font-size:9px">(${clusters[k].length})</span></div>`;}).join('');
+  ctx.innerHTML=`
+    <div class="ctx-head">${det.argus_class||det.type} · f${frameIndexMap[det.frame_id]??'?'}</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="showDrawer(ctxDet);hideCtx()"><span style="opacity:.5">◎</span> view details + move</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item danger" onclick="moveDet('${det.detection_id}','${fromCid}','-1');hideCtx()"><span style="opacity:.5">✕</span> remove → noise</div>
+    ${others.filter(k=>k!=='-1').length?`<div class="ctx-sep"></div><div class="ctx-head">move to cluster</div><div class="ctx-sub">${items}</div>`:''}`;
+  const mw=185,mh=Math.min(300,100+others.length*30);
+  ctx.style.left=(e.clientX+mw>window.innerWidth?e.clientX-mw:e.clientX)+'px';
+  ctx.style.top=(e.clientY+mh>window.innerHeight?e.clientY-mh:e.clientY)+'px';
+  ctx.classList.add('open');
+}
+function hideCtx() { ctx.classList.remove('open'); ctxDet=null; }
+document.addEventListener('click', e=>{ if(!ctx.contains(e.target))hideCtx(); });
+
+/* ══════════════════════════════════════════════════════════
+   KEYBOARD
+══════════════════════════════════════════════════════════ */
+document.addEventListener('keydown', e => {
+  if(e.key==='Escape'){hideCtx();document.getElementById('det-drawer').classList.remove('open')}
+  const a=document.activeElement;
+  if(['label-input','s3-input','search-input'].includes(a.id))return;
+  if(e.key==='a'||e.key==='A')applyLabel('accepted');
+  if(e.key==='r'||e.key==='R')applyLabel('rejected');
+  if(e.key==='d'||e.key==='D')applyLabel('deferred');
+  if((e.key==='ArrowRight'||e.key==='Tab')&&!e.shiftKey){e.preventDefault();adv(1)}
+  if((e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey))&&selectedCluster!=null){e.preventDefault();adv(-1)}
+});
+function adv(dir){
+  const keys=Object.keys(clusters).filter(k=>k!=='-1').sort((a,b)=>+a-+b);
+  const next=keys[keys.indexOf(String(selectedCluster))+dir];
+  if(next!=null)selectCluster(next);
+}
+
+/* ══════════════════════════════════════════════════════════
+   EXPORTS
+══════════════════════════════════════════════════════════ */
+
+/** Export 1: Enriched JSON (clusters + crops + labels) — for reloading into this tool */
+function exportEnriched() {
+  if (!data) return;
+  const out = {
+    task_id: data.task_id,
+    media_info: data.media_info,
+    sample_rate_ms: data.sample_rate_ms,
+    exported_at: new Date().toISOString(),
+    n_detections: data.detections.length,
+    n_labeled: data.detections.filter(d=>d.label_status!=='unlabeled').length,
+    detections: data.detections.map(det=>({
+      detection_id: det.detection_id,
+      frame_id: det.frame_id,
+      frame_index: frameIndexMap[det.frame_id]??null,
+      frame_time: det.frame_time,
+      frame_url: det.frame_url,
+      type: det.type,
+      argus_class: det.argus_class,
+      confidence: det.confidence,
+      overlay: det.overlay,
+      logo_quality: det.logo_quality,
+      bbox: det.bbox,
+      crop_b64: det.crop_b64,
+      cluster_id: det.cluster_id,
+      umap_x: det.umap_x,
+      umap_y: det.umap_y,
+      label: det.label,
+      label_status: det.label_status,
+    }))
+  };
+  download(JSON.stringify(out, null, 2), `argus_enriched_${(data.task_id||'export').substring(0,8)}.json`);
+}
+
+/** Export 2: Updated Argus task JSON — original structure with label mutations applied.
+ *
+ *  Rules per accepted detection:
+ *    LOGO type  → class = label, manualSource = "ClusterModeration", isManuallyEdited = true
+ *    OTHER type → class = label, manualSource = "ClusterModeration", isManuallyEdited = true,
+ *                 type = "LOGO", source.type = "LOGO"
+ */
+function exportArgus() {
+  if (!data) return;
+
+  const ts = new Date().toISOString();
+
+  // build lookup: detection_id → label  (only accepted detections with a label)
+  const labelMap = {};
+  data.detections.forEach(det => {
+    if (det.label && det.label_status === 'accepted') {
+      labelMap[det.detection_id] = det.label;
+    }
+  });
+
+  // helper: apply mutations to a single raw Argus detection object in-place
+  function patchDetection(det, label, originalType) {
+    det.class            = label;
+    det.manualSource     = 'ClusterModeration';
+    det.isManuallyEdited = true;
+    det.edit_timestamp   = ts;
+    // non-LOGO types get promoted to LOGO
+    if (originalType !== 'LOGO') {
+      det.type = 'LOGO';
+      if (det.source) det.source.type = 'LOGO';
+    }
+  }
+
+  let outputJson;
+
+  if (rawArgusJson) {
+    // ── have original ── deep clone and patch in-place
+    outputJson = JSON.parse(JSON.stringify(rawArgusJson));
+    outputJson.result.frames.forEach(frame => {
+      (frame.detections || []).forEach(det => {
+        if (labelMap[det.id]) {
+          patchDetection(det, labelMap[det.id], det.type);
+        }
+      });
+    });
+
+  } else {
+    // ── no original ── reconstruct Argus structure from enriched data
+    const frameMap = {};
+    data.detections.forEach(enriched => {
+      if (!frameMap[enriched.frame_id]) {
+        frameMap[enriched.frame_id] = {
+          id: enriched.frame_id,
+          time: enriched.frame_time ?? 0,
+          frameUrl: enriched.frame_url,
+          thumbnailUrl: null,
+          detections: [],
+        };
+      }
+
+      const label = labelMap[enriched.detection_id];
+      const isLabeled = !!label;
+      const outputType = (isLabeled && enriched.type !== 'LOGO') ? 'LOGO' : enriched.type;
+
+      frameMap[enriched.frame_id].detections.push({
+        id:              enriched.detection_id,
+        type:            outputType,
+        source:          { type: outputType, modelId: '' },
+        class:           isLabeled ? label : (enriched.argus_class || ''),
+        confidence:      enriched.confidence,
+        overlay:         enriched.overlay,
+        logo_quality:    enriched.logo_quality,
+        boundingBox:     enriched.bbox,
+        locations:       [],
+        text:            '',
+        manualSource:    isLabeled ? 'ClusterModeration' : null,
+        isManuallyEdited: isLabeled,
+        isDeleted:       false,
+        edit_timestamp:  isLabeled ? ts : null,
+      });
+    });
+
+    outputJson = {
+      taskId:   data.task_id,
+      status:   'SUCCESS',
+      result:   { mediaInfo: data.media_info, frames: Object.values(frameMap) },
+      _annotator_note: 'Reconstructed from enriched JSON — original Argus JSON not available',
+    };
+  }
+
+  // append annotation summary
+  outputJson._annotation_summary = {
+    exported_at: new Date().toISOString(),
+    tool: 'argus_annotator v3.0',
+    labels_applied: Object.keys(labelMap).length,
+    label_map: Object.fromEntries(
+      Object.entries(
+        data.detections.reduce((acc, det) => {
+          if (det.label && det.label_status==='accepted') {
+            if (!acc[det.label]) acc[det.label] = 0;
+            acc[det.label]++;
+          }
+          return acc;
+        }, {})
+      )
+    ),
+  };
+
+  download(JSON.stringify(outputJson, null, 2), `argus_labeled_${(data.task_id||'export').substring(0,8)}.json`);
+}
+
+function download(content, filename) {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ══════════════════════════════════════════════════════════
+   OVERLAY HELPERS
+══════════════════════════════════════════════════════════ */
+function showOverlay(title, sub, pct) {
+  document.getElementById('overlay').classList.remove('hidden');
+  setOverlay(title, sub, pct);
+}
+function setOverlay(title, sub, pct) {
+  document.getElementById('ov-title').textContent = title;
+  document.getElementById('ov-sub').textContent   = sub;
+  document.getElementById('ov-bar').style.width   = Math.round(pct) + '%';
+  document.getElementById('ov-step').textContent  = Math.round(pct) + '%';
+}
+function hideOverlay() { document.getElementById('overlay').classList.add('hidden'); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
