@@ -477,7 +477,7 @@ function initFromEnriched(d) {
   document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
   if (rawArgusJson) updateRawArgusIndicator();
 
-  mergeSuggestions     = d.merge_suggestions || [];
+  mergeSuggestions     = d.merge_suggestions || computeUmapSuggestions();
   dismissedSuggestions = new Set();
   suggestPanelOpen     = true;
 
@@ -1035,6 +1035,70 @@ function mergeInto() {
 /* ═══════════════════════════════════════════════════════════
    SUGGESTED MERGES PANEL
 ═══════════════════════════════════════════════════════════ */
+function computeUmapSuggestions() {
+  if (!data) return [];
+  const cids = getClusterIds().filter(k => k !== '-1');
+  if (cids.length < 2) return [];
+
+  // Compute per-cluster UMAP centroid
+  const centroids = {};
+  cids.forEach(k => {
+    const dets = getCluster(k);
+    const mx = dets.reduce((s, d) => s + (d.umap_x || 0), 0) / dets.length;
+    const my = dets.reduce((s, d) => s + (d.umap_y || 0), 0) / dets.length;
+    centroids[k] = { x: mx, y: my };
+  });
+
+  // Normalise distances relative to UMAP bounding box diagonal
+  const xs = Object.values(centroids).map(c => c.x);
+  const ys = Object.values(centroids).map(c => c.y);
+  const diag = Math.sqrt(
+    Math.pow(Math.max(...xs) - Math.min(...xs), 2) +
+    Math.pow(Math.max(...ys) - Math.min(...ys), 2)
+  ) || 1;
+
+  // Collect all pairwise normalised distances
+  const pairs = [];
+  for (let i = 0; i < cids.length; i++) {
+    for (let j = i + 1; j < cids.length; j++) {
+      const a = centroids[cids[i]], b = centroids[cids[j]];
+      const dist = Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)) / diag;
+      pairs.push({ ci: cids[i], cj: cids[j], dist });
+    }
+  }
+
+  // Threshold: bottom 15% of normalised distance
+  const sorted = [...pairs].sort((a, b) => a.dist - b.dist);
+  const threshold = sorted[Math.floor(sorted.length * 0.15)]?.dist ?? 0.15;
+  const close = pairs.filter(p => p.dist <= threshold);
+
+  // Union-Find → connected components
+  const parent = {};
+  cids.forEach(k => { parent[k] = k; });
+  function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
+  function union(x, y) { parent[find(x)] = find(y); }
+  close.forEach(({ ci, cj }) => union(ci, cj));
+
+  const groups = {};
+  cids.forEach(k => {
+    const root = find(k);
+    if (!groups[root]) groups[root] = [];
+    groups[root].push(k);
+  });
+
+  const suggestions = [];
+  Object.values(groups).forEach(group => {
+    if (group.length < 2) return;
+    const groupPairs = close.filter(p => group.includes(p.ci) && group.includes(p.cj));
+    const avgSim = groupPairs.length
+      ? 1 - groupPairs.reduce((s, p) => s + p.dist, 0) / groupPairs.length
+      : 0.85;
+    suggestions.push({ group: group.map(Number).sort((a, b) => a - b), similarity: +avgSim.toFixed(3) });
+  });
+
+  return suggestions.sort((a, b) => b.similarity - a.similarity);
+}
+
 function getActiveSuggestions() {
   const existingCids = new Set(getClusterIds());
   return mergeSuggestions
