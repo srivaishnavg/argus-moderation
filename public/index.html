@@ -165,6 +165,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .suggest-merge-btn:hover{background:#3d320e}
 .suggest-dismiss-btn{font-family:var(--mono);font-size:9px;padding:3px 6px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;flex-shrink:0}
 .suggest-dismiss-btn:hover{color:var(--red);border-color:var(--red)}
+/* ── multi-select ── */
+.cl-card.multi-selected{border-color:var(--accent)!important;background:#0c1524}
+.multi-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.multi-count{font-family:var(--mono);font-size:11px;color:var(--text2);flex:1}
+.cl-check{width:14px;height:14px;border:1.5px solid var(--border2);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .12s}
+.cl-card.multi-selected .cl-check{background:var(--accent);border-color:var(--accent);color:#fff}
 /* cluster drag handle */
 .cl-drag-handle{font-size:14px;color:var(--text3);cursor:grab;padding:0 3px;opacity:0;transition:opacity .15s;user-select:none;flex-shrink:0;line-height:1}
 .cl-card:hover .cl-drag-handle{opacity:.5}
@@ -246,9 +252,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="left-toolbar">
         <input class="search-input" id="search-input" placeholder="search label or class…" oninput="renderBrowser()">
         <div class="spacer"></div>
-        <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">drag crops to move · drag <span style="opacity:.7">⠿</span> to merge clusters · right-click for options</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">drag crops to move · drag <span style="opacity:.7">⠿</span> to merge · <kbd style="background:var(--bg3);border:1px solid var(--border2);border-radius:2px;padding:0 3px">ctrl</kbd>+click to multi-select · right-click for options</span>
       </div>
       <div class="cluster-browser" id="cluster-browser"></div>
+      <div class="multi-bar" id="multi-bar" style="display:none">
+        <span class="multi-count" id="multi-count">0 selected</span>
+        <button class="btn" onclick="clearMultiSelect()">✕ clear</button>
+        <button class="btn mrg" onclick="mergeSelectedClusters()">merge all selected ↗</button>
+      </div>
     </div>
     <div class="right">
       <div class="panel-head">
@@ -312,9 +323,10 @@ let selectedCluster = null;
 let frameIndexMap = {};
 let dragDet       = null;
 let dragFromCid   = null;
-let mergeSuggestions    = [];
+let mergeSuggestions     = [];
 let dismissedSuggestions = new Set();
-let suggestPanelOpen    = true;
+let suggestPanelOpen     = true;
+let selectedClusters     = new Set(); // multi-select
 
 const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
   '#f97316','#ec4899','#10b981','#f59e0b','#6366f1','#84cc16','#06b6d4',
@@ -530,7 +542,8 @@ function buildClusterCard(k, dets, label, status) {
   if (!status) status = dets.every(d=>d.label_status==='accepted')?'accepted':dets.every(d=>d.label_status==='rejected')?'rejected':dets.every(d=>d.label_status==='deferred')?'deferred':'mixed';
 
   const card = document.createElement('div');
-  card.className = 'cl-card'+(selectedCluster===k?' selected':'')+(status==='accepted'?' accepted-card':status==='rejected'?' rejected-card':status==='deferred'?' deferred-card':'');
+  const isMultiSel = selectedClusters.has(k);
+  card.className = 'cl-card'+(selectedCluster===k?' selected':'')+(isMultiSel?' multi-selected':'')+(status==='accepted'?' accepted-card':status==='rejected'?' rejected-card':status==='deferred'?' deferred-card':'');
   card.dataset.cid = k;
 
   const lblBadge = label?`<span class="cl-lbl ${status==='rejected'?'rej':status==='deferred'?'def':''}">${label}</span>`:'';
@@ -538,6 +551,7 @@ function buildClusterCard(k, dets, label, status) {
 
   card.innerHTML=`
     <div class="cl-head">
+      <div class="cl-check" title="Ctrl+click to multi-select">${isMultiSel?'✓':''}</div>
       <div class="cl-dot" style="background:${col}"></div>
       <div class="cl-name">${+k===-1?'⊘ noise':'C'+k}</div>
       ${lblBadge}
@@ -547,7 +561,10 @@ function buildClusterCard(k, dets, label, status) {
     </div>
     <div class="cl-thumbs" id="ct-${k}"></div>`;
 
-  card.querySelector('.cl-head').addEventListener('click', () => selectCluster(k));
+  card.querySelector('.cl-head').addEventListener('click', e => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); toggleMultiSelect(k); }
+    else selectCluster(k);
+  });
   makeClusterDraggable(card.querySelector('.cl-drag-handle'), k);
 
   // pointer-based drop zone — highlights when a drag enters the card area
@@ -637,7 +654,7 @@ function patchClusterCard(k) {
   }
 
   // update border class
-  card.className = 'cl-card'+(selectedCluster===k?' selected':'')+(status==='accepted'?' accepted-card':status==='rejected'?' rejected-card':status==='deferred'?' deferred-card':'');
+  card.className = 'cl-card'+(selectedCluster===k?' selected':'')+(selectedClusters.has(k)?' multi-selected':'')+(status==='accepted'?' accepted-card':status==='rejected'?' rejected-card':status==='deferred'?' deferred-card':'');
   card.dataset.cid = k;
 
   // refresh thumbnails
@@ -964,6 +981,7 @@ function confirmMerge() {
   });
 
   if (suggIdx !== null) dismissedSuggestions.add(suggIdx);
+  clearMultiSelect();
 
   updateStats();
   renderBrowser();
@@ -1030,6 +1048,44 @@ function mergeInto() {
   });
   selectedCluster = toCid;
   updateStats(); renderBrowser(); selectCluster(toCid);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MULTI-SELECT
+═══════════════════════════════════════════════════════════ */
+function toggleMultiSelect(cid) {
+  if (selectedClusters.has(cid)) selectedClusters.delete(cid);
+  else selectedClusters.add(cid);
+  updateMultiSelectUI();
+}
+
+function updateMultiSelectUI() {
+  const n = selectedClusters.size;
+  const bar = document.getElementById('multi-bar');
+  bar.style.display = n >= 1 ? 'flex' : 'none';
+  document.getElementById('multi-count').textContent =
+    n === 1 ? '1 cluster selected — ctrl+click more to multi-select' : `${n} clusters selected`;
+  document.querySelectorAll('.cl-card').forEach(card => {
+    const sel = selectedClusters.has(card.dataset.cid);
+    card.classList.toggle('multi-selected', sel);
+    const chk = card.querySelector('.cl-check');
+    if (chk) chk.textContent = sel ? '✓' : '';
+  });
+}
+
+function clearMultiSelect() {
+  selectedClusters.clear();
+  updateMultiSelectUI();
+}
+
+function mergeSelectedClusters() {
+  if (selectedClusters.size < 2) return;
+  const cids = [...selectedClusters];
+  const toCid = cids.reduce((best, cid) =>
+    getCluster(cid).length >= getCluster(best).length ? cid : best
+  );
+  const fromCids = cids.filter(cid => cid !== toCid);
+  openMergeDialog(fromCids, toCid, null);
 }
 
 /* ═══════════════════════════════════════════════════════════
