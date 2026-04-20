@@ -335,10 +335,21 @@ function getClusterIds() {
 /* ═══════════════════════════════════════════════════════════
    FILE LOADING
 ═══════════════════════════════════════════════════════════ */
+// Prevent browser from navigating to dropped file anywhere on the page
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop',     e => e.preventDefault());
+
 const dz = document.getElementById('drop-zone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('drag'); });
+dz.addEventListener('drop',      e => { e.preventDefault(); dz.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+
+// Also accept drops on the whole upload screen
+const uploadScreen = document.getElementById('upload-screen');
+uploadScreen.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+uploadScreen.addEventListener('dragleave', e => { if (!uploadScreen.contains(e.relatedTarget)) dz.classList.remove('drag'); });
+uploadScreen.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+
 document.getElementById('file-input').addEventListener('change', e => handleFiles(e.target.files));
 function loadFile(e) { readFile(e.target.files[0]); }
 
