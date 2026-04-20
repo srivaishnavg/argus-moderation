@@ -128,6 +128,70 @@ def extract_features(img: Image.Image) -> np.ndarray:
     return (feat / norm) if norm > 0 else feat
 
 
+def compute_merge_suggestions(features_matrix: np.ndarray, labels: np.ndarray, threshold: float = 0.90) -> list:
+    """
+    Find clusters that are visually similar (cosine sim of feature centroids >= threshold).
+    Returns a list of suggestion groups, each a set of cluster IDs that could be merged.
+    """
+    from collections import defaultdict
+
+    cluster_ids = sorted(set(labels.tolist()) - {-1})
+    if len(cluster_ids) < 2:
+        return []
+
+    # Per-cluster centroid in feature space (features already L2-normalised)
+    centroids = {}
+    for cid in cluster_ids:
+        mask = labels == cid
+        centroid = features_matrix[mask].mean(axis=0)
+        norm = np.linalg.norm(centroid)
+        centroids[cid] = (centroid / norm) if norm > 0 else centroid
+
+    cid_list = list(centroids.keys())
+
+    # Pairwise cosine similarity (dot product since normalised)
+    similar_pairs = []
+    for i in range(len(cid_list)):
+        for j in range(i + 1, len(cid_list)):
+            sim = float(np.dot(centroids[cid_list[i]], centroids[cid_list[j]]))
+            if sim >= threshold:
+                similar_pairs.append((cid_list[i], cid_list[j], sim))
+
+    if not similar_pairs:
+        return []
+
+    # Union-Find → connected components of similar clusters
+    parent = {cid: cid for cid in cid_list}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        parent[find(x)] = find(y)
+
+    for ci, cj, _ in similar_pairs:
+        union(ci, cj)
+
+    groups: dict = defaultdict(set)
+    for cid in cid_list:
+        groups[find(cid)].add(cid)
+
+    suggestions = []
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group_list = sorted(group)
+        group_sims = [s for ci, cj, s in similar_pairs if ci in group and cj in group]
+        avg_sim = float(np.mean(group_sims)) if group_sims else threshold
+        suggestions.append({"group": group_list, "similarity": round(avg_sim, 3)})
+
+    suggestions.sort(key=lambda s: -s["similarity"])
+    return suggestions
+
+
 def run_umap_hdbscan(features: np.ndarray, n_neighbors: int, min_cluster_size: int):
     import umap
     import hdbscan as hdb
@@ -255,23 +319,30 @@ async def preprocess(request: Request):
     coords_2d, labels = run_umap_hdbscan(features_matrix, n_neighbors, min_cluster)
 
     for i, rec in enumerate(records):
-        rec["umap_x"]    = float(coords_2d[i, 0])
-        rec["umap_y"]    = float(coords_2d[i, 1])
+        rec["umap_x"]     = float(coords_2d[i, 0])
+        rec["umap_y"]     = float(coords_2d[i, 1])
         rec["cluster_id"] = int(labels[i])
-        del rec["_feat"]
 
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise    = int((labels == -1).sum())
     log.info(f"→ {n_clusters} clusters, {n_noise} noise")
 
+    log.info("Computing merge suggestions…")
+    merge_suggestions = compute_merge_suggestions(features_matrix, labels, threshold=0.90)
+    log.info(f"→ {len(merge_suggestions)} merge suggestion group(s)")
+
+    for rec in records:
+        del rec["_feat"]
+
     return JSONResponse({
-        "task_id":          task_id,
-        "media_info":       media_info,
-        "sample_rate_ms":   sample_rate,
-        "n_detections":     len(records),
-        "n_clusters":       n_clusters,
-        "n_noise":          n_noise,
-        "min_cluster_size": min_cluster,
-        "umap_neighbors":   n_neighbors,
-        "detections":       records,
+        "task_id":           task_id,
+        "media_info":        media_info,
+        "sample_rate_ms":    sample_rate,
+        "n_detections":      len(records),
+        "n_clusters":        n_clusters,
+        "n_noise":           n_noise,
+        "min_cluster_size":  min_cluster,
+        "umap_neighbors":    n_neighbors,
+        "merge_suggestions": merge_suggestions,
+        "detections":        records,
     })

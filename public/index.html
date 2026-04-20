@@ -147,6 +147,24 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .progress-fill{height:100%;background:var(--accent);transition:width .3s}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:6px;color:var(--text3);font-family:var(--mono);font-size:11px;text-align:center}
 
+/* ── suggested merges panel ── */
+.suggest-panel{background:var(--bg2);border:1.5px solid #6b561a;border-radius:6px;overflow:hidden}
+.suggest-header{display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;user-select:none}
+.suggest-header.open{border-bottom:1px solid var(--border)}
+.suggest-title{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--amber);flex:1}
+.suggest-dismiss-all{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer}
+.suggest-dismiss-all:hover{color:var(--text);background:var(--bg3)}
+.suggest-chevron{font-size:10px;color:var(--text3);transition:transform .15s;flex-shrink:0}
+.suggest-chevron.open{transform:rotate(180deg)}
+.suggest-item{display:flex;align-items:center;gap:7px;padding:6px 10px;border-top:1px solid var(--border)}
+.suggest-clusters{display:flex;align-items:center;gap:4px;flex:1;flex-wrap:wrap}
+.suggest-badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap}
+.suggest-bdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.suggest-sim{font-family:var(--mono);font-size:9px;color:var(--text3);white-space:nowrap;flex-shrink:0}
+.suggest-merge-btn{font-family:var(--mono);font-size:9px;padding:3px 8px;border-radius:3px;border:1px solid var(--amber);background:transparent;color:var(--amber);cursor:pointer;white-space:nowrap;flex-shrink:0}
+.suggest-merge-btn:hover{background:#3d320e}
+.suggest-dismiss-btn{font-family:var(--mono);font-size:9px;padding:3px 6px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;flex-shrink:0}
+.suggest-dismiss-btn:hover{color:var(--red);border-color:var(--red)}
 /* cluster drag handle */
 .cl-drag-handle{font-size:14px;color:var(--text3);cursor:grab;padding:0 3px;opacity:0;transition:opacity .15s;user-select:none;flex-shrink:0;line-height:1}
 .cl-card:hover .cl-drag-handle{opacity:.5}
@@ -294,6 +312,9 @@ let selectedCluster = null;
 let frameIndexMap = {};
 let dragDet       = null;
 let dragFromCid   = null;
+let mergeSuggestions    = [];
+let dismissedSuggestions = new Set();
+let suggestPanelOpen    = true;
 
 const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
   '#f97316','#ec4899','#10b981','#f59e0b','#6366f1','#84cc16','#06b6d4',
@@ -445,6 +466,10 @@ function initFromEnriched(d) {
   document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
   if (rawArgusJson) updateRawArgusIndicator();
 
+  mergeSuggestions     = d.merge_suggestions || [];
+  dismissedSuggestions = new Set();
+  suggestPanelOpen     = true;
+
   updateStats();
   renderBrowser();
   const first = getClusterIds().filter(k => k !== '-1')[0];
@@ -477,6 +502,7 @@ function renderBrowser() {
   const browser = document.getElementById('cluster-browser');
   const q = document.getElementById('search-input').value.trim().toLowerCase();
   browser.innerHTML = '';
+  renderSuggestions();
   getClusterIds().forEach(k => {
     const dets   = getCluster(k);
     if (!dets.length) return;
@@ -845,16 +871,24 @@ function makeClusterDraggable(handleEl, cid) {
   });
 }
 
-function showMergeDialog(fromCid, toCid) {
-  pendingMergeFrom = fromCid;
-  pendingMergeTo   = toCid;
+// pendingMergeFroms: string[] of source cids; pendingMergeTo: string target cid
+// pendingMergeSuggIdx: suggestion index to auto-dismiss after merge (null if drag-triggered)
+let pendingMergeFroms   = [];
+let pendingMergeTo      = null;
+let pendingMergeSuggIdx = null;
 
-  const fromDets  = getCluster(fromCid);
-  const toDets    = getCluster(toCid);
-  const fromLabel = fromDets.find(d => d.label)?.label || '';
-  const toLabel   = toDets.find(d => d.label)?.label || '';
-  const fromCol   = ccolor(+fromCid);
-  const toCol     = ccolor(+toCid);
+function showMergeDialog(fromCid, toCid) {
+  openMergeDialog([String(fromCid)], String(toCid), null);
+}
+
+function openMergeDialog(fromCids, toCid, suggestionIdx) {
+  pendingMergeFroms   = fromCids.map(String);
+  pendingMergeTo      = String(toCid);
+  pendingMergeSuggIdx = suggestionIdx;
+
+  const toDets  = getCluster(toCid);
+  const toLabel = toDets.find(d => d.label)?.label || '';
+  const toCol   = ccolor(+toCid);
 
   function clusterHTML(cid, dets, col, label) {
     return `<div class="md-cluster">
@@ -867,44 +901,61 @@ function showMergeDialog(fromCid, toCid) {
     </div>`;
   }
 
-  document.getElementById('md-from').innerHTML = clusterHTML(fromCid, fromDets, fromCol, fromLabel);
+  // Build "from" section — one or more source clusters stacked
+  const fromHTML = fromCids.map(cid => {
+    const dets  = getCluster(cid);
+    const label = dets.find(d => d.label)?.label || '';
+    return clusterHTML(cid, dets, ccolor(+cid), label);
+  }).join('<div style="font-size:10px;color:var(--text3);text-align:center;padding:2px 0">+</div>');
+
+  document.getElementById('md-title').textContent = fromCids.length > 1 ? 'Merge cluster group?' : 'Merge clusters?';
+  document.getElementById('md-from').innerHTML = fromHTML;
   document.getElementById('md-to').innerHTML   = clusterHTML(toCid, toDets, toCol, toLabel);
 
-  const resultLabel = toLabel || fromLabel || '';
-  const total = fromDets.length + toDets.length;
+  const totalFrom  = fromCids.reduce((n, cid) => n + getCluster(cid).length, 0);
+  const total      = totalFrom + toDets.length;
+  const fromLabels = fromCids.map(cid => getCluster(cid).find(d => d.label)?.label).filter(Boolean);
+  const resultLabel = toLabel || fromLabels[0] || '';
+  const fromNames  = fromCids.map(cid => +cid === -1 ? 'noise' : 'C' + cid).join(', ');
+
   document.getElementById('md-note').innerHTML =
-    `All <b style="color:var(--text)">${fromDets.length}</b> detection${fromDets.length!==1?'s':''} from ` +
-    `<b style="color:${fromCol}">${+fromCid===-1?'noise':'C'+fromCid}</b> will move into ` +
-    `<b style="color:${toCol}">${+toCid===-1?'noise':'C'+toCid}</b>. ` +
+    `All <b style="color:var(--text)">${totalFrom}</b> detection${totalFrom !== 1 ? 's' : ''} from ` +
+    `<b>${fromNames}</b> will move into <b style="color:${toCol}">${+toCid === -1 ? 'noise' : 'C' + toCid}</b>. ` +
     (resultLabel ? `Detections will inherit label <b style="color:var(--green)">${resultLabel}</b>. ` : 'No label will be applied. ') +
-    `Result: <b style="color:var(--text)">${total}</b> detection${total!==1?'s':''} total.`;
+    `Result: <b style="color:var(--text)">${total}</b> detection${total !== 1 ? 's' : ''} total.`;
 
   document.getElementById('merge-backdrop').style.display = 'block';
   document.getElementById('merge-dialog').style.display   = 'block';
 }
 
 function cancelMerge() {
-  pendingMergeFrom = null;
-  pendingMergeTo   = null;
+  pendingMergeFroms   = [];
+  pendingMergeTo      = null;
+  pendingMergeSuggIdx = null;
   document.getElementById('merge-backdrop').style.display = 'none';
   document.getElementById('merge-dialog').style.display   = 'none';
 }
 
 function confirmMerge() {
-  if (!pendingMergeFrom || !pendingMergeTo) return;
-  const fromCid = pendingMergeFrom, toCid = pendingMergeTo;
+  if (!pendingMergeFroms.length || !pendingMergeTo) return;
+  const fromCids = pendingMergeFroms, toCid = pendingMergeTo, suggIdx = pendingMergeSuggIdx;
   cancelMerge();
 
   const toLabel = getCluster(toCid).find(d => d.label)?.label ||
-                  getCluster(fromCid).find(d => d.label)?.label || null;
-  data.detections.forEach(det => {
-    if (String(det.cluster_id) === fromCid) {
-      det.cluster_id = +toCid;
-      if (toLabel) det.label = toLabel;
-    }
+    fromCids.map(cid => getCluster(cid).find(d => d.label)?.label).find(Boolean) || null;
+
+  fromCids.forEach(fromCid => {
+    data.detections.forEach(det => {
+      if (String(det.cluster_id) === fromCid) {
+        det.cluster_id = +toCid;
+        if (toLabel) det.label = toLabel;
+      }
+    });
+    if (selectedCluster === fromCid) selectedCluster = toCid;
   });
 
-  if (selectedCluster === fromCid) selectedCluster = toCid;
+  if (suggIdx !== null) dismissedSuggestions.add(suggIdx);
+
   updateStats();
   renderBrowser();
   selectCluster(toCid);
@@ -970,6 +1021,99 @@ function mergeInto() {
   });
   selectedCluster = toCid;
   updateStats(); renderBrowser(); selectCluster(toCid);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SUGGESTED MERGES PANEL
+═══════════════════════════════════════════════════════════ */
+function getActiveSuggestions() {
+  const existingCids = new Set(getClusterIds());
+  return mergeSuggestions
+    .map((s, i) => ({ ...s, origIdx: i }))
+    .filter(s => {
+      if (dismissedSuggestions.has(s.origIdx)) return false;
+      const valid = s.group.filter(cid => existingCids.has(String(cid)));
+      return valid.length >= 2;
+    });
+}
+
+function renderSuggestions() {
+  const browser = document.getElementById('cluster-browser');
+  const existing = document.getElementById('suggest-panel');
+  if (existing) existing.remove();
+
+  const active = getActiveSuggestions();
+  if (!active.length) return;
+
+  const panel = document.createElement('div');
+  panel.className = 'suggest-panel';
+  panel.id = 'suggest-panel';
+
+  const listHTML = active.map(s => {
+    const existingCids = new Set(getClusterIds());
+    const validGroup = s.group.filter(cid => existingCids.has(String(cid)));
+    const badges = validGroup.map(cid => {
+      const col   = ccolor(+cid);
+      const dets  = getCluster(String(cid));
+      const label = dets.find(d => d.label)?.label || '';
+      return `<span class="suggest-badge">
+        <span class="suggest-bdot" style="background:${col}"></span>
+        ${+cid === -1 ? '⊘' : 'C' + cid}${label ? ' · ' + label : ''}
+        <span style="color:var(--text3)">(${dets.length})</span>
+      </span>`;
+    }).join('<span style="color:var(--text3);font-size:10px;padding:0 1px">+</span>');
+
+    return `<div class="suggest-item">
+      <div class="suggest-clusters">${badges}</div>
+      <span class="suggest-sim">${Math.round(s.similarity * 100)}% sim</span>
+      <button class="suggest-merge-btn" onclick="startSuggestedMerge(${s.origIdx})">merge ↗</button>
+      <button class="suggest-dismiss-btn" onclick="dismissSuggestion(${s.origIdx})">✕</button>
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="suggest-header ${suggestPanelOpen ? 'open' : ''}" onclick="toggleSuggestPanel()">
+      <span style="color:var(--amber);font-size:12px">⚡</span>
+      <span class="suggest-title">Suggested Merges <span style="opacity:.6;font-weight:400">(${active.length})</span></span>
+      <button class="suggest-dismiss-all" onclick="event.stopPropagation();dismissAllSuggestions()">dismiss all</button>
+      <span class="suggest-chevron ${suggestPanelOpen ? 'open' : ''}">▾</span>
+    </div>
+    ${suggestPanelOpen ? `<div>${listHTML}</div>` : ''}`;
+
+  browser.insertBefore(panel, browser.firstChild);
+}
+
+function toggleSuggestPanel() {
+  suggestPanelOpen = !suggestPanelOpen;
+  renderSuggestions();
+}
+
+function dismissSuggestion(origIdx) {
+  dismissedSuggestions.add(origIdx);
+  renderSuggestions();
+}
+
+function dismissAllSuggestions() {
+  getActiveSuggestions().forEach(s => dismissedSuggestions.add(s.origIdx));
+  renderSuggestions();
+}
+
+function startSuggestedMerge(origIdx) {
+  const s = mergeSuggestions[origIdx];
+  if (!s) return;
+  const existingCids = new Set(getClusterIds());
+  const validGroup = s.group.filter(cid => existingCids.has(String(cid)));
+  if (validGroup.length < 2) return;
+
+  // Target = cluster with most detections (prefer non-noise)
+  const nonNoise = validGroup.filter(cid => cid !== -1);
+  const pool = nonNoise.length ? nonNoise : validGroup;
+  const toCid = String(pool.reduce((best, cid) =>
+    getCluster(String(cid)).length >= getCluster(String(best)).length ? cid : best
+  ));
+  const fromCids = validGroup.filter(cid => String(cid) !== toCid).map(String);
+
+  openMergeDialog(fromCids, toCid, origIdx);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1105,6 +1249,7 @@ function exportEnriched() {
     exported_at: new Date().toISOString(),
     n_detections: data.detections.length,
     n_labeled: data.detections.filter(d=>d.label_status!=='unlabeled').length,
+    merge_suggestions: mergeSuggestions,
     detections: data.detections.map(det=>({
       detection_id: det.detection_id, frame_id: det.frame_id,
       frame_index: frameIndexMap[det.frame_id]??null,
