@@ -8,3 +8,4 @@ numpy
 requests
 scikit-image
 scikit-learn
+opencv-python-headless
