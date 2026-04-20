@@ -9,17 +9,21 @@ import os
 import warnings
 from pathlib import Path
 
+warnings.filterwarnings("ignore")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("argus")
+
+log.info("Starting Argus Cluster Moderation API...")
+log.info(f"PORT={os.getenv('PORT', '8000')}")
+
 import numpy as np
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse
 from PIL import Image
 
-warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("argus")
+log.info("Core imports OK")
 
 app = FastAPI(title="Argus Cluster Moderation API", version="1.0.0")
 

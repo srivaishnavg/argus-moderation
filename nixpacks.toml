@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["python311", "gcc", "g++"]
+
+[phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install fastapi uvicorn[standard] python-multipart pillow numpy requests scikit-image scikit-learn",
+  "pip install umap-learn hdbscan"
+]
+
+[start]
+cmd = "python -m uvicorn api.server:app --host 0.0.0.0 --port $PORT"
