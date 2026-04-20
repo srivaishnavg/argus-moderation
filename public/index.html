@@ -809,8 +809,6 @@ function getClusterCardAt(x, y) {
 ═══════════════════════════════════════════════════════════ */
 let isDraggingCluster = false;
 let dragFromClusterId = null;
-let pendingMergeFrom  = null;
-let pendingMergeTo    = null;
 
 function makeClusterDraggable(handleEl, cid) {
   let startX = 0, startY = 0, started = false, pointerId = null;
