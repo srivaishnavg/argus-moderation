@@ -1040,40 +1040,48 @@ function computeUmapSuggestions() {
   const cids = getClusterIds().filter(k => k !== '-1');
   if (cids.length < 2) return [];
 
-  // Compute per-cluster UMAP centroid
+  // Per-cluster UMAP centroid
   const centroids = {};
   cids.forEach(k => {
     const dets = getCluster(k);
-    const mx = dets.reduce((s, d) => s + (d.umap_x || 0), 0) / dets.length;
-    const my = dets.reduce((s, d) => s + (d.umap_y || 0), 0) / dets.length;
-    centroids[k] = { x: mx, y: my };
+    centroids[k] = {
+      x: dets.reduce((s, d) => s + (d.umap_x || 0), 0) / dets.length,
+      y: dets.reduce((s, d) => s + (d.umap_y || 0), 0) / dets.length,
+    };
   });
 
-  // Normalise distances relative to UMAP bounding box diagonal
-  const xs = Object.values(centroids).map(c => c.x);
-  const ys = Object.values(centroids).map(c => c.y);
-  const diag = Math.sqrt(
-    Math.pow(Math.max(...xs) - Math.min(...xs), 2) +
-    Math.pow(Math.max(...ys) - Math.min(...ys), 2)
-  ) || 1;
+  // Find each cluster's nearest-neighbor distance (O(n²), fine for n≤2000)
+  const nnDist = {};
+  cids.forEach(ci => {
+    let min = Infinity;
+    cids.forEach(cj => {
+      if (ci === cj) return;
+      const d = Math.hypot(centroids[ci].x - centroids[cj].x, centroids[ci].y - centroids[cj].y);
+      if (d < min) min = d;
+    });
+    nnDist[ci] = min;
+  });
 
-  // Collect all pairwise normalised distances
-  const pairs = [];
+  // Adaptive threshold = median nearest-neighbor distance × 1.5
+  const nnVals = Object.values(nnDist).sort((a, b) => a - b);
+  const median  = nnVals[Math.floor(nnVals.length / 2)];
+  const threshold = median * 1.5;
+
+  // Collect all close pairs
+  const close = [];
   for (let i = 0; i < cids.length; i++) {
     for (let j = i + 1; j < cids.length; j++) {
-      const a = centroids[cids[i]], b = centroids[cids[j]];
-      const dist = Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)) / diag;
-      pairs.push({ ci: cids[i], cj: cids[j], dist });
+      const dist = Math.hypot(
+        centroids[cids[i]].x - centroids[cids[j]].x,
+        centroids[cids[i]].y - centroids[cids[j]].y
+      );
+      if (dist <= threshold) close.push({ ci: cids[i], cj: cids[j], dist });
     }
   }
 
-  // Use a fixed normalised threshold of 0.12; expand to 0.20 if nothing found
-  let threshold = 0.12;
-  let close = pairs.filter(p => p.dist <= threshold);
-  if (!close.length) {
-    threshold = 0.20;
-    close = pairs.filter(p => p.dist <= threshold);
-  }
+  console.log(`[suggestions] ${cids.length} clusters · NN median=${median.toFixed(3)} · threshold=${threshold.toFixed(3)} · ${close.length} close pairs`);
+
+  if (!close.length) return [];
 
   // Union-Find → connected components
   const parent = {};
@@ -1092,13 +1100,13 @@ function computeUmapSuggestions() {
   const suggestions = [];
   Object.values(groups).forEach(group => {
     if (group.length < 2) return;
-    const groupPairs = close.filter(p => group.includes(p.ci) && group.includes(p.cj));
-    const avgSim = groupPairs.length
-      ? 1 - groupPairs.reduce((s, p) => s + p.dist, 0) / groupPairs.length
-      : 0.85;
-    suggestions.push({ group: group.map(Number).sort((a, b) => a - b), similarity: +avgSim.toFixed(3) });
+    const gPairs = close.filter(p => group.includes(p.ci) && group.includes(p.cj));
+    const avgDist = gPairs.length ? gPairs.reduce((s, p) => s + p.dist, 0) / gPairs.length : threshold;
+    const sim = Math.max(0.5, 1 - avgDist / (threshold * 2));
+    suggestions.push({ group: group.map(Number).sort((a, b) => a - b), similarity: +sim.toFixed(3) });
   });
 
+  console.log(`[suggestions] → ${suggestions.length} suggestion groups`);
   return suggestions.sort((a, b) => b.similarity - a.similarity);
 }
 

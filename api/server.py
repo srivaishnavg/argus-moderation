@@ -328,7 +328,7 @@ async def preprocess(request: Request):
     log.info(f"→ {n_clusters} clusters, {n_noise} noise")
 
     log.info("Computing merge suggestions…")
-    merge_suggestions = compute_merge_suggestions(features_matrix, labels, threshold=0.78)
+    merge_suggestions = compute_merge_suggestions(features_matrix, labels, threshold=0.65)
     log.info(f"→ {len(merge_suggestions)} merge suggestion group(s)")
 
     for rec in records:
