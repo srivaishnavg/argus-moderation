@@ -1,16 +1,5 @@
 """
 Argus Cluster Moderation — API Server
-======================================
-Accepts a raw Argus task JSON, runs the preprocessing pipeline
-(crop → features → UMAP → HDBSCAN), returns enriched JSON.
-
-Run locally:
-    pip install fastapi uvicorn python-multipart umap-learn hdbscan pillow numpy requests scikit-image
-    uvicorn api.server:app --reload --port 8000
-
-Environment variables:
-    ARGUS_API_KEY   — X-API-Key header for cdn.stage.highfive-api.com (optional)
-    ALLOWED_ORIGINS — comma-separated CORS origins (default: *)
 """
 
 import io
@@ -18,13 +7,13 @@ import json
 import logging
 import os
 import warnings
-from typing import Optional
+from pathlib import Path
 
 import numpy as np
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -35,25 +24,42 @@ log = logging.getLogger("argus")
 app = FastAPI(title="Argus Cluster Moderation API", version="1.0.0")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if "*" in origins else origins,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── health (must respond immediately — before any heavy imports) ───────────────
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
 # ── serve frontend ─────────────────────────────────────────────────────────────
-PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "public")
-if os.path.exists(PUBLIC_DIR):
-    app.mount("/static", StaticFiles(directory=PUBLIC_DIR), name="static")
+# Resolve public dir relative to this file, works on Railway and locally
+PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
 @app.get("/")
 def root():
-    index = os.path.join(PUBLIC_DIR, "index.html")
-    if os.path.exists(index):
-        return FileResponse(index)
-    return {"status": "ok", "message": "Argus Cluster Moderation API"}
+    index = PUBLIC_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return {"status": "ok", "message": "Argus Cluster Moderation API — frontend not found"}
+
+@app.get("/{path:path}")
+def static_files(path: str):
+    """Serve any file from public/ that isn't an API route."""
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404)
+    f = PUBLIC_DIR / path
+    if f.exists() and f.is_file():
+        return FileResponse(str(f))
+    # SPA fallback
+    index = PUBLIC_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    raise HTTPException(status_code=404)
 
 # ── image helpers ──────────────────────────────────────────────────────────────
 
@@ -92,8 +98,6 @@ CROP_SIZE = (64, 64)
 def extract_features(img: Image.Image) -> np.ndarray:
     small = img.resize(CROP_SIZE, Image.LANCZOS)
     arr   = np.array(small, dtype=np.uint8)
-
-    # HSV color histogram (48 dims)
     try:
         import cv2
         hsv  = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
@@ -106,8 +110,7 @@ def extract_features(img: Image.Image) -> np.ndarray:
             np.histogram(arr[:,:,c], bins=16, range=(0,256))[0].astype(np.float32)
             for c in range(3)
         ])
-
-    # HOG (512 dims)
+    # HOG — use skimage if available, fall back to raw grayscale
     try:
         from skimage.feature import hog
         gray     = np.array(small.convert("L"))
@@ -116,27 +119,21 @@ def extract_features(img: Image.Image) -> np.ndarray:
     except Exception:
         gray     = np.array(small.convert("L")).flatten().astype(np.float32) / 255.0
         hog_feat = gray
-
     feat = np.concatenate([hist, hog_feat])
     norm = np.linalg.norm(feat)
     return (feat / norm) if norm > 0 else feat
 
 
-# ── clustering ─────────────────────────────────────────────────────────────────
-
 def run_umap_hdbscan(features: np.ndarray, n_neighbors: int, min_cluster_size: int):
     import umap
     import hdbscan as hdb
-
     n = len(features)
     n_neighbors = min(n_neighbors, max(2, n - 1))
-
     reducer = umap.UMAP(
         n_components=2, n_neighbors=n_neighbors,
         min_dist=0.1, metric="cosine", random_state=42,
     )
     coords_2d = reducer.fit_transform(features)
-
     clusterer = hdb.HDBSCAN(
         min_cluster_size=min_cluster_size, min_samples=1, metric="euclidean",
     )
@@ -152,6 +149,13 @@ async def preprocess(request: Request):
     Accepts raw Argus task JSON in request body.
     Returns enriched JSON with crops, UMAP coords, and cluster assignments.
     """
+    # lazy import heavy ML deps — keeps startup fast for healthcheck
+    try:
+        import umap as umap_module
+        import hdbscan as hdb_module
+        from skimage.feature import hog as skimage_hog
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"ML dependency missing: {e}. Check requirements.txt.")
     try:
         body = await request.body()
         argus_json = json.loads(body)
@@ -267,8 +271,3 @@ async def preprocess(request: Request):
         "umap_neighbors":   n_neighbors,
         "detections":       records,
     })
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
