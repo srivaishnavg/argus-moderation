@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: argus-cluster-moderation
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: ARGUS_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"

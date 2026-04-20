@@ -1,0 +1,11 @@
+{
+  "name": "argus-cluster-moderation",
+  "version": "4.0.0",
+  "description": "Argus cluster annotation tool with server-side preprocessing",
+  "scripts": {
+    "start": "uvicorn api.server:app --host 0.0.0.0 --port 8000",
+    "dev": "uvicorn api.server:app --reload --port 8000"
+  },
+  "author": "Zoomph Dev",
+  "license": "MIT"
+}

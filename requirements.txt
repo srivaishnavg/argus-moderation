@@ -1,0 +1,10 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+umap-learn==0.5.6
+hdbscan==0.8.38.post1
+Pillow==10.3.0
+numpy==1.26.4
+requests==2.31.0
+scikit-image==0.23.2
+scikit-learn==1.4.2
