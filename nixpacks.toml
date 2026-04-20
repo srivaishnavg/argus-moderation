@@ -3,9 +3,10 @@ nixPkgs = ["python311", "gcc"]
 
 [phases.install]
 cmds = [
-  "pip install --upgrade pip",
-  "pip install fastapi uvicorn[standard] python-multipart pillow numpy requests scikit-image scikit-learn",
-  "pip install umap-learn hdbscan"
+  "python3 -m ensurepip --upgrade",
+  "python3 -m pip install --upgrade pip",
+  "python3 -m pip install fastapi uvicorn[standard] python-multipart pillow numpy requests scikit-image scikit-learn",
+  "python3 -m pip install umap-learn hdbscan"
 ]
 
 [start]
