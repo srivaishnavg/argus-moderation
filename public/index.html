@@ -16,6 +16,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .spacer{flex:1}
 .pill{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:3px;border:1px solid var(--border2);color:var(--text2);white-space:nowrap}
 .pill span{color:var(--text);font-weight:500}
+.pill.info-pill{border-color:transparent;color:var(--text3);background:none}
+.pill.info-pill span{color:var(--text3);font-weight:400}
+.pill.tab{cursor:pointer;transition:border-color .12s,background .12s}
+.pill.tab:hover{background:var(--bg3);color:var(--text)}
+.pill.tab.active{border-color:var(--accent)!important;color:var(--text);background:rgba(79,142,247,.08)}
 .btn{font-family:var(--mono);font-size:11px;padding:5px 12px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
 .btn:hover{background:var(--bg3);color:var(--text)}
 .btn.success{background:#1a3d26;border-color:#2d6b42;color:var(--green)}
@@ -148,6 +153,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:6px;color:var(--text3);font-family:var(--mono);font-size:11px;text-align:center}
 
 /* ── suggested merges panel ── */
+#suggest-panel-container{padding:0 10px;padding-top:8px;flex-shrink:0;max-height:35%;overflow-y:auto}
+#suggest-panel-container:empty{display:none}
 .suggest-panel{background:var(--bg2);border:1.5px solid #6b561a;border-radius:6px;overflow:hidden}
 .suggest-header{display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;user-select:none}
 .suggest-header.open{border-bottom:1px solid var(--border)}
@@ -165,6 +172,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .suggest-merge-btn:hover{background:#3d320e}
 .suggest-dismiss-btn{font-family:var(--mono);font-size:9px;padding:3px 6px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;flex-shrink:0}
 .suggest-dismiss-btn:hover{color:var(--red);border-color:var(--red)}
+.suggest-item{cursor:pointer}
+.suggest-item:hover{background:rgba(255,255,255,.03)}
+.sugg-review-bar{padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:rgba(107,86,26,.1)}
+.srb-hint{font-family:var(--mono);font-size:10px;color:var(--text3);flex:1}
+.sugg-section-head{grid-column:1/-1;display:flex;align-items:center;gap:6px;padding:6px 2px 4px;margin-top:4px}
+.sugg-section-head:first-child{margin-top:0}
+.sugg-head-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sugg-head-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text)}
+.sugg-head-lbl{font-family:var(--mono);font-size:10px;color:var(--text2)}
+.sugg-head-count{font-family:var(--mono);font-size:10px;color:var(--text3);margin-left:auto}
+.sugg-section-sep{grid-column:1/-1;height:1px;background:var(--border);margin:6px 0}
+.sugg-imgs-sub{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:5px;margin-bottom:2px}
 /* ── multi-select ── */
 .cl-card.multi-selected{border-color:var(--accent)!important;background:#0c1524}
 .multi-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
@@ -183,7 +202,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cl-card.cluster-drag-over{border-color:var(--amber)!important;background:#1f1a06}
 /* merge confirmation dialog */
 #merge-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;backdrop-filter:blur(2px)}
-#merge-dialog{position:fixed;z-index:601;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px 24px;width:370px;font-family:var(--mono);box-shadow:0 8px 32px rgba(0,0,0,.7)}
+#merge-dialog{position:fixed;z-index:601;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px 24px;width:370px;font-family:var(--mono);box-shadow:0 8px 32px rgba(0,0,0,.7);max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+#md-from{overflow-y:auto;max-height:220px;flex-shrink:1;padding-right:2px}
+#md-from::-webkit-scrollbar{width:4px}
+#md-from::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 #md-title{font-size:13px;font-weight:500;color:var(--text);margin-bottom:14px}
 .md-cluster{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:9px 11px}
 .md-cname{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;color:var(--text);margin-bottom:3px}
@@ -236,10 +258,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="sep"></div>
     <div class="task-id" id="task-id-label">—</div>
     <div class="spacer"></div>
-    <div class="pill">total <span id="st-total">0</span></div>
-    <div class="pill">clusters <span id="st-clusters">0</span></div>
-    <div class="pill" style="border-color:#2d6b42">labeled <span id="st-done" style="color:var(--green)">0</span></div>
-    <div class="pill">noise <span id="st-noise" style="color:var(--text3)">0</span></div>
+    <div class="pill info-pill">total <span id="st-total">0</span> images</div>
+    <div class="pill tab active" id="tab-all" onclick="setBrowserFilter('all')">clusters <span id="st-clusters">0</span></div>
+    <div class="pill tab" id="tab-unlabeled" onclick="setBrowserFilter('unlabeled')">unlabeled <span id="st-unlabeled">0</span></div>
+    <div class="pill tab" id="tab-labeled" onclick="setBrowserFilter('labeled')">labeled <span id="st-done" style="color:var(--green)">0</span></div>
+    <div class="pill tab" id="tab-noise" onclick="setBrowserFilter('noise')">noise <span id="st-noise" style="color:var(--text3)">0</span></div>
     <div class="sep"></div>
     <button class="btn" onclick="document.getElementById('file-input2').click()">↑ new task JSON</button>
     <input type="file" id="file-input2" accept=".json" style="display:none" onchange="loadFile(event)">
@@ -254,6 +277,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div class="spacer"></div>
         <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">drag crops to move · drag <span style="opacity:.7">⠿</span> to merge · <kbd style="background:var(--bg3);border:1px solid var(--border2);border-radius:2px;padding:0 3px">ctrl</kbd>+click to multi-select · right-click for options</span>
       </div>
+      <div id="suggest-panel-container"></div>
       <div class="cluster-browser" id="cluster-browser"></div>
       <div class="multi-bar" id="multi-bar" style="display:none">
         <span class="multi-count" id="multi-count">0 selected</span>
@@ -270,6 +294,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div class="empty-state" style="grid-column:1/-1"><span>◈</span><span>no cluster selected</span></div>
       </div>
       <div class="det-drawer" id="det-drawer"></div>
+      <div class="sugg-review-bar" id="sugg-review-bar" style="display:none">
+        <span class="srb-hint">Review clusters — merge if they represent the same entity</span>
+        <button class="btn mrg" id="srb-merge-btn">merge ↗</button>
+        <button class="btn" id="srb-dismiss-btn">dismiss</button>
+      </div>
       <div class="action-bar" id="action-bar" style="display:none">
         <div>
           <div class="field-label">label — applies to all crops · sets class in Argus export</div>
@@ -324,9 +353,11 @@ let frameIndexMap = {};
 let dragDet       = null;
 let dragFromCid   = null;
 let mergeSuggestions     = [];
-let dismissedSuggestions = new Set();
-let suggestPanelOpen     = true;
+let dismissedSuggestions  = new Set();
+let suggestPanelOpen      = true;
+let previewingSuggestion  = null;
 let selectedClusters     = new Set(); // multi-select
+let browserFilter        = 'all';     // 'all' | 'unlabeled' | 'labeled' | 'noise'
 
 const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
   '#f97316','#ec4899','#10b981','#f59e0b','#6366f1','#84cc16','#06b6d4',
@@ -503,16 +534,28 @@ function initFromEnriched(d) {
    STATS
 ═══════════════════════════════════════════════════════════ */
 function updateStats() {
-  const total = data.detections.length;
-  const done  = data.detections.filter(d => d.label_status !== 'unlabeled').length;
-  const noise = data.detections.filter(d => String(d.cluster_id) === '-1').length;
-  const nc    = getClusterIds().filter(k => k !== '-1').length;
-  document.getElementById('st-total').textContent    = total;
-  document.getElementById('st-clusters').textContent = nc;
-  document.getElementById('st-done').textContent     = done;
-  document.getElementById('st-noise').textContent    = noise;
-  const pct = total - noise > 0 ? ((done/(total-noise))*100).toFixed(0) : 0;
+  const total    = data.detections.length;
+  const noise    = data.detections.filter(d => String(d.cluster_id) === '-1').length;
+  const nonNoise = getClusterIds().filter(k => k !== '-1');
+  const nc       = nonNoise.length;
+  const labeled  = nonNoise.filter(k => getCluster(k).every(d => d.label_status !== 'unlabeled')).length;
+  const unlabeled = nc - labeled;
+  document.getElementById('st-total').textContent     = total;
+  document.getElementById('st-clusters').textContent  = nc;
+  document.getElementById('st-done').textContent      = labeled;
+  document.getElementById('st-noise').textContent     = noise;
+  document.getElementById('st-unlabeled').textContent = unlabeled;
+  const doneCount = data.detections.filter(d => d.label_status !== 'unlabeled').length;
+  const pct = total - noise > 0 ? ((doneCount/(total-noise))*100).toFixed(0) : 0;
   document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+function setBrowserFilter(filter) {
+  browserFilter = filter;
+  ['all','unlabeled','labeled','noise'].forEach(f => {
+    document.getElementById('tab-'+f)?.classList.toggle('active', f === filter);
+  });
+  renderBrowser();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -532,6 +575,11 @@ function renderBrowser() {
     const label  = dets.find(d => d.label)?.label || '';
     const status = dets.every(d=>d.label_status==='accepted')?'accepted':dets.every(d=>d.label_status==='rejected')?'rejected':dets.every(d=>d.label_status==='deferred')?'deferred':'mixed';
     if (q && !label.toLowerCase().includes(q) && !dets.some(d=>(d.argus_class||'').toLowerCase().includes(q))) return;
+    // filter tabs
+    if (browserFilter === 'noise' && k !== '-1') return;
+    if (browserFilter !== 'noise' && k === '-1') return;
+    if (browserFilter === 'unlabeled' && !dets.some(d => d.label_status === 'unlabeled')) return;
+    if (browserFilter === 'labeled' && dets.some(d => d.label_status === 'unlabeled')) return;
     browser.appendChild(buildClusterCard(k, dets, label, status));
   });
 }
@@ -551,7 +599,7 @@ function buildClusterCard(k, dets, label, status) {
 
   card.innerHTML=`
     <div class="cl-head">
-      <div class="cl-check" title="Ctrl+click to multi-select">${isMultiSel?'✓':''}</div>
+      <div class="cl-check" title="Click to select for merge">${isMultiSel?'✓':''}</div>
       <div class="cl-dot" style="background:${col}"></div>
       <div class="cl-name">${+k===-1?'⊘ noise':'C'+k}</div>
       ${lblBadge}
@@ -561,6 +609,10 @@ function buildClusterCard(k, dets, label, status) {
     </div>
     <div class="cl-thumbs" id="ct-${k}"></div>`;
 
+  card.querySelector('.cl-check').addEventListener('click', e => {
+    e.stopPropagation();
+    toggleMultiSelect(k);
+  });
   card.querySelector('.cl-head').addEventListener('click', e => {
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); toggleMultiSelect(k); }
     else selectCluster(k);
@@ -667,6 +719,8 @@ function patchClusterCard(k) {
 ═══════════════════════════════════════════════════════════ */
 function selectCluster(cid) {
   selectedCluster = cid;
+  previewingSuggestion = null;
+  document.getElementById('sugg-review-bar').style.display = 'none';
 
   // update selected highlight in browser
   document.querySelectorAll('.cl-card').forEach(el => {
@@ -707,7 +761,11 @@ function buildDetCard(det, cid, parent) {
   card.className = 'det-card '+(det.label_status!=='unlabeled'?det.label_status:'');
   card.dataset.detId = det.detection_id;
   card.style.cursor = 'grab';
-  card.innerHTML = `<img src="data:image/jpeg;base64,${det.crop_b64}" loading="lazy"><div class="fn2">f${fi}</div><div class="cls">${det.argus_class||det.type}</div>`;
+  const img = document.createElement('img');
+  img.src = `data:image/jpeg;base64,${det.crop_b64}`;
+  const fn2 = document.createElement('div'); fn2.className = 'fn2'; fn2.textContent = 'f' + fi;
+  const cls = document.createElement('div'); cls.className = 'cls'; cls.textContent = det.argus_class || det.type;
+  card.appendChild(img); card.appendChild(fn2); card.appendChild(cls);
   card.addEventListener('click', () => showDrawer(det));
   makeDraggable(card, det, cid);
   card.addEventListener('mouseenter', e => showTip(e, det));
@@ -1008,9 +1066,8 @@ function moveDet(detId, fromCid, toCid) {
 
   // If we're viewing the source cluster, remove card from detail grid
   if (selectedCluster === fromCid) {
-    const card = document.querySelector(`.det-card[data-det-id="${detId}"]`);
+    const card = document.querySelector(`#detail-grid .det-card[data-det-id="${detId}"]`);
     if (card) card.remove();
-    // update panel header count
     const dets = getCluster(fromCid);
     const types = [...new Set(dets.map(d => d.type))].join(', ');
     document.getElementById('panel-sub').textContent = `${dets.length} detections · ${types} · label sets class in Argus export`;
@@ -1018,6 +1075,10 @@ function moveDet(detId, fromCid, toCid) {
       document.getElementById('detail-grid').innerHTML='<div class="empty-state" style="grid-column:1/-1"><span>empty cluster</span></div>';
       document.getElementById('action-bar').style.display='none';
     }
+  } else if (previewingSuggestion !== null) {
+    // suggestion preview shows multiple clusters — remove the card directly
+    const card = document.querySelector(`#detail-grid .det-card[data-det-id="${detId}"]`);
+    if (card) card.remove();
   }
 }
 
@@ -1063,8 +1124,8 @@ function updateMultiSelectUI() {
   const n = selectedClusters.size;
   const bar = document.getElementById('multi-bar');
   bar.style.display = n >= 1 ? 'flex' : 'none';
-  document.getElementById('multi-count').textContent =
-    n === 1 ? '1 cluster selected — ctrl+click more to multi-select' : `${n} clusters selected`;
+  const names = [...selectedClusters].map(cid => +cid === -1 ? '⊘noise' : 'C' + cid).join(' + ');
+  document.getElementById('multi-count').textContent = n === 0 ? '' : names;
   document.querySelectorAll('.cl-card').forEach(card => {
     const sel = selectedClusters.has(card.dataset.cid);
     card.classList.toggle('multi-selected', sel);
@@ -1178,9 +1239,11 @@ function getActiveSuggestions() {
 }
 
 function renderSuggestions() {
-  const browser = document.getElementById('cluster-browser');
-  const existing = document.getElementById('suggest-panel');
-  if (existing) existing.remove();
+  const container = document.getElementById('suggest-panel-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (browserFilter === 'noise') return;
 
   const active = getActiveSuggestions();
   if (!active.length) return;
@@ -1203,11 +1266,11 @@ function renderSuggestions() {
       </span>`;
     }).join('<span style="color:var(--text3);font-size:10px;padding:0 1px">+</span>');
 
-    return `<div class="suggest-item">
+    return `<div class="suggest-item" onclick="previewSuggestion(${s.origIdx})" title="Click to review in right panel">
       <div class="suggest-clusters">${badges}</div>
       <span class="suggest-sim">${Math.round(s.similarity * 100)}% sim</span>
-      <button class="suggest-merge-btn" onclick="startSuggestedMerge(${s.origIdx})">merge ↗</button>
-      <button class="suggest-dismiss-btn" onclick="dismissSuggestion(${s.origIdx})">✕</button>
+      <button class="suggest-merge-btn" onclick="event.stopPropagation();startSuggestedMerge(${s.origIdx})">merge ↗</button>
+      <button class="suggest-dismiss-btn" onclick="event.stopPropagation();dismissSuggestion(${s.origIdx})">✕</button>
     </div>`;
   }).join('');
 
@@ -1220,7 +1283,7 @@ function renderSuggestions() {
     </div>
     ${suggestPanelOpen ? `<div>${listHTML}</div>` : ''}`;
 
-  browser.insertBefore(panel, browser.firstChild);
+  container.appendChild(panel);
 }
 
 function toggleSuggestPanel() {
@@ -1236,6 +1299,71 @@ function dismissSuggestion(origIdx) {
 function dismissAllSuggestions() {
   getActiveSuggestions().forEach(s => dismissedSuggestions.add(s.origIdx));
   renderSuggestions();
+}
+
+function previewSuggestion(origIdx) {
+  previewingSuggestion = origIdx;
+  const s = mergeSuggestions[origIdx];
+  if (!s) return;
+  const existingCids = new Set(getClusterIds());
+  const validGroup = s.group.filter(cid => existingCids.has(String(cid)));
+  if (validGroup.length < 2) return;
+
+  // clear cluster selection highlight
+  selectedCluster = null;
+  document.querySelectorAll('.cl-card').forEach(el => el.classList.remove('selected'));
+
+  // panel header
+  const names = validGroup.map(cid => 'C' + cid).join(' + ');
+  document.getElementById('panel-title').textContent = '⚡ ' + names;
+  document.getElementById('panel-sub').textContent =
+    Math.round(s.similarity * 100) + '% visual similarity · review and merge if these are the same entity';
+
+  // swap bars
+  document.getElementById('action-bar').style.display = 'none';
+  document.getElementById('det-drawer').classList.remove('open');
+  const reviewBar = document.getElementById('sugg-review-bar');
+  reviewBar.style.display = 'flex';
+  document.getElementById('srb-merge-btn').onclick = () => startSuggestedMerge(origIdx);
+  document.getElementById('srb-dismiss-btn').onclick = () => {
+    dismissSuggestion(origIdx);
+    previewingSuggestion = null;
+    reviewBar.style.display = 'none';
+    document.getElementById('panel-title').textContent = 'select a cluster';
+    document.getElementById('panel-sub').textContent = 'click any cluster on the left to annotate';
+    document.getElementById('detail-grid').innerHTML =
+      '<div class="empty-state" style="grid-column:1/-1"><span>◈</span><span>suggestion dismissed</span></div>';
+  };
+
+  // render clusters in the detail grid — each cluster gets its own sub-grid so
+  // image cards are never direct siblings of grid-column:1/-1 section headers
+  const grid = document.getElementById('detail-grid');
+  grid.innerHTML = '';
+  validGroup.forEach((cid, i) => {
+    const dets  = getCluster(String(cid));
+    const col   = ccolor(+cid);
+    const label = dets.find(d => d.label)?.label || '';
+
+    const head = document.createElement('div');
+    head.className = 'sugg-section-head';
+    head.innerHTML = `<span class="sugg-head-dot" style="background:${col}"></span>
+      <span class="sugg-head-name">${+cid === -1 ? '⊘ noise' : 'C' + cid}</span>
+      ${label ? `<span class="sugg-head-lbl">· ${label}</span>` : ''}
+      <span class="sugg-head-count">${dets.length} det${dets.length !== 1 ? 's' : ''}</span>`;
+    grid.appendChild(head);
+
+    const sub = document.createElement('div');
+    sub.className = 'sugg-imgs-sub';
+    dets.forEach(det => buildDetCard(det, String(cid), sub));
+    grid.appendChild(sub);
+
+    if (i < validGroup.length - 1) {
+      const sep = document.createElement('div');
+      sep.className = 'sugg-section-sep';
+      grid.appendChild(sep);
+    }
+  });
+  grid.scrollTop = 0;
 }
 
 function startSuggestedMerge(origIdx) {
