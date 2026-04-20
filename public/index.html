@@ -146,6 +146,33 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .progress-bar{height:2px;background:var(--border);flex-shrink:0}
 .progress-fill{height:100%;background:var(--accent);transition:width .3s}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:6px;color:var(--text3);font-family:var(--mono);font-size:11px;text-align:center}
+
+/* cluster drag handle */
+.cl-drag-handle{font-size:14px;color:var(--text3);cursor:grab;padding:0 3px;opacity:0;transition:opacity .15s;user-select:none;flex-shrink:0;line-height:1}
+.cl-card:hover .cl-drag-handle{opacity:.5}
+.cl-drag-handle:hover{opacity:1!important;color:var(--text2)}
+/* cluster drag ghost */
+#cluster-drag-ghost{position:fixed;pointer-events:none;z-index:999;background:var(--bg2);border:2px solid var(--amber);border-radius:6px;padding:6px 11px;display:none;box-shadow:0 4px 12px rgba(0,0,0,.6);will-change:transform;top:0;left:0;font-family:var(--mono);white-space:nowrap}
+#cdg-name{font-size:11px;font-weight:500;color:var(--text);display:flex;align-items:center;gap:6px}
+#cdg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+#cdg-count{font-size:10px;color:var(--text3);margin-top:2px}
+.cl-card.cluster-drag-over{border-color:var(--amber)!important;background:#1f1a06}
+/* merge confirmation dialog */
+#merge-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;backdrop-filter:blur(2px)}
+#merge-dialog{position:fixed;z-index:601;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px 24px;width:370px;font-family:var(--mono);box-shadow:0 8px 32px rgba(0,0,0,.7)}
+#md-title{font-size:13px;font-weight:500;color:var(--text);margin-bottom:14px}
+.md-cluster{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:9px 11px}
+.md-cname{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;color:var(--text);margin-bottom:3px}
+.md-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.md-cinfo{font-size:10px;color:var(--text3)}
+.md-clbl{font-size:9px;padding:1px 6px;border-radius:2px;background:#1a3d26;color:var(--green);border:1px solid #2d6b42}
+#md-arrow{text-align:center;font-size:16px;color:var(--amber);margin:6px 0}
+#md-note{font-size:10px;color:var(--text3);margin-top:12px;padding:8px 10px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);line-height:1.6}
+#md-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+#md-cancel{font-family:var(--mono);font-size:11px;padding:6px 16px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer}
+#md-cancel:hover{background:var(--bg3);color:var(--text)}
+#md-confirm{font-family:var(--mono);font-size:11px;padding:6px 16px;border-radius:4px;border:1px solid var(--amber);background:transparent;color:var(--amber);cursor:pointer}
+#md-confirm:hover{background:#3d320e}
 </style>
 </head>
 <body>
@@ -201,7 +228,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="left-toolbar">
         <input class="search-input" id="search-input" placeholder="search label or class…" oninput="renderBrowser()">
         <div class="spacer"></div>
-        <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">drag crops between clusters · right-click for options</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--text3)">drag crops to move · drag <span style="opacity:.7">⠿</span> to merge clusters · right-click for options</span>
       </div>
       <div class="cluster-browser" id="cluster-browser"></div>
     </div>
@@ -237,6 +264,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <div id="drag-ghost"><img id="drag-ghost-img" src=""></div>
+<div id="cluster-drag-ghost"><div id="cdg-name"><span id="cdg-dot"></span><span id="cdg-label"></span></div><div id="cdg-count"></div></div>
+<div id="merge-backdrop" style="display:none" onclick="cancelMerge()"></div>
+<div id="merge-dialog" style="display:none">
+  <div id="md-title">Merge clusters?</div>
+  <div id="md-from"></div>
+  <div id="md-arrow">↓ merge into ↓</div>
+  <div id="md-to"></div>
+  <div id="md-note"></div>
+  <div id="md-actions">
+    <button id="md-cancel" onclick="cancelMerge()">Cancel</button>
+    <button id="md-confirm" onclick="confirmMerge()">Confirm Merge ↗</button>
+  </div>
+</div>
 <div class="tip" id="tooltip"></div>
 <div class="ctx-menu" id="ctx-menu"></div>
 
@@ -466,14 +506,19 @@ function buildClusterCard(k, dets, label, status) {
       ${lblBadge}
       <div class="cl-count" id="cnt-${k}">${dets.length} det${dets.length!==1?'s':''}</div>
       <div>${noiseBtn}</div>
+      <div class="cl-drag-handle" title="Drag to merge with another cluster">⠿</div>
     </div>
     <div class="cl-thumbs" id="ct-${k}"></div>`;
 
   card.querySelector('.cl-head').addEventListener('click', () => selectCluster(k));
+  makeClusterDraggable(card.querySelector('.cl-drag-handle'), k);
 
   // pointer-based drop zone — highlights when a drag enters the card area
-  card.addEventListener('pointerenter', () => { if (isDragging && dragDet && String(dragDet.cluster_id) !== k) card.classList.add('drag-over'); });
-  card.addEventListener('pointerleave', () => card.classList.remove('drag-over'));
+  card.addEventListener('pointerenter', () => {
+    if (isDragging && dragDet && String(dragDet.cluster_id) !== k) card.classList.add('drag-over');
+    if (isDraggingCluster && dragFromClusterId && dragFromClusterId !== k) card.classList.add('cluster-drag-over');
+  });
+  card.addEventListener('pointerleave', () => { card.classList.remove('drag-over'); card.classList.remove('cluster-drag-over'); });
 
   fillThumbs(card.querySelector(`#ct-${k}`), dets, k);
   return card;
@@ -713,10 +758,156 @@ function makeDraggable(el, det, fromCid) {
 function getClusterCardAt(x, y) {
   // temporarily hide ghost so elementFromPoint works
   const ghost = document.getElementById('drag-ghost');
+  const cghost = document.getElementById('cluster-drag-ghost');
   ghost.style.visibility = 'hidden';
+  cghost.style.visibility = 'hidden';
   const el = document.elementFromPoint(x, y);
   ghost.style.visibility = 'visible';
+  cghost.style.visibility = 'visible';
   return el?.closest('.cl-card') || null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CLUSTER DRAG — drag ⠿ handle to merge entire clusters
+═══════════════════════════════════════════════════════════ */
+let isDraggingCluster = false;
+let dragFromClusterId = null;
+let pendingMergeFrom  = null;
+let pendingMergeTo    = null;
+
+function makeClusterDraggable(handleEl, cid) {
+  let startX = 0, startY = 0, started = false, pointerId = null;
+
+  handleEl.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation(); // don't trigger selectCluster on the head
+    startX = e.clientX; startY = e.clientY;
+    started = false;
+    pointerId = e.pointerId;
+    handleEl.setPointerCapture(e.pointerId);
+
+    const onMove = e => {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+
+      if (!started) {
+        if (Math.sqrt(dx*dx + dy*dy) < DRAG_THRESHOLD) return;
+        started = true;
+        isDraggingCluster = true;
+        dragFromClusterId = String(cid);
+        hideTip();
+
+        const dets  = getCluster(cid);
+        const label = dets.find(d => d.label)?.label || '';
+        const col   = ccolor(+cid);
+        document.getElementById('cdg-dot').style.cssText =
+          `width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0;display:inline-block`;
+        document.getElementById('cdg-label').textContent =
+          (+cid === -1 ? '⊘ noise' : 'C' + cid) + (label ? ' · ' + label : '');
+        document.getElementById('cdg-count').textContent = dets.length + ' detection' + (dets.length !== 1 ? 's' : '');
+        const ghost = document.getElementById('cluster-drag-ghost');
+        ghost.style.display = 'block';
+        ghost.style.transform = `translate(${e.clientX - 60}px, ${e.clientY - 20}px)`;
+      }
+
+      if (!started) return;
+      document.getElementById('cluster-drag-ghost').style.transform =
+        `translate(${e.clientX - 60}px, ${e.clientY - 20}px)`;
+
+      document.querySelectorAll('.cl-card.cluster-drag-over').forEach(c => c.classList.remove('cluster-drag-over'));
+      const under = getClusterCardAt(e.clientX, e.clientY);
+      if (under && under.dataset.cid !== String(cid)) under.classList.add('cluster-drag-over');
+    };
+
+    const onUp = e => {
+      if (e.pointerId !== pointerId) return;
+      handleEl.removeEventListener('pointermove', onMove);
+      handleEl.removeEventListener('pointerup', onUp);
+      handleEl.removeEventListener('pointercancel', onUp);
+
+      if (started) {
+        document.getElementById('cluster-drag-ghost').style.display = 'none';
+        document.querySelectorAll('.cl-card.cluster-drag-over').forEach(c => c.classList.remove('cluster-drag-over'));
+        const under = getClusterCardAt(e.clientX, e.clientY);
+        const toCid = under?.dataset?.cid;
+        if (toCid && toCid !== String(cid)) showMergeDialog(String(cid), toCid);
+      }
+
+      isDraggingCluster = false;
+      dragFromClusterId = null;
+      started = false;
+    };
+
+    handleEl.addEventListener('pointermove', onMove);
+    handleEl.addEventListener('pointerup', onUp);
+    handleEl.addEventListener('pointercancel', onUp);
+  });
+}
+
+function showMergeDialog(fromCid, toCid) {
+  pendingMergeFrom = fromCid;
+  pendingMergeTo   = toCid;
+
+  const fromDets  = getCluster(fromCid);
+  const toDets    = getCluster(toCid);
+  const fromLabel = fromDets.find(d => d.label)?.label || '';
+  const toLabel   = toDets.find(d => d.label)?.label || '';
+  const fromCol   = ccolor(+fromCid);
+  const toCol     = ccolor(+toCid);
+
+  function clusterHTML(cid, dets, col, label) {
+    return `<div class="md-cluster">
+      <div class="md-cname">
+        <div class="md-dot" style="background:${col}"></div>
+        <span>${+cid === -1 ? '⊘ noise' : 'C' + cid}</span>
+        ${label ? `<span class="md-clbl">${label}</span>` : ''}
+      </div>
+      <div class="md-cinfo">${dets.length} detection${dets.length !== 1 ? 's' : ''}</div>
+    </div>`;
+  }
+
+  document.getElementById('md-from').innerHTML = clusterHTML(fromCid, fromDets, fromCol, fromLabel);
+  document.getElementById('md-to').innerHTML   = clusterHTML(toCid, toDets, toCol, toLabel);
+
+  const resultLabel = toLabel || fromLabel || '';
+  const total = fromDets.length + toDets.length;
+  document.getElementById('md-note').innerHTML =
+    `All <b style="color:var(--text)">${fromDets.length}</b> detection${fromDets.length!==1?'s':''} from ` +
+    `<b style="color:${fromCol}">${+fromCid===-1?'noise':'C'+fromCid}</b> will move into ` +
+    `<b style="color:${toCol}">${+toCid===-1?'noise':'C'+toCid}</b>. ` +
+    (resultLabel ? `Detections will inherit label <b style="color:var(--green)">${resultLabel}</b>. ` : 'No label will be applied. ') +
+    `Result: <b style="color:var(--text)">${total}</b> detection${total!==1?'s':''} total.`;
+
+  document.getElementById('merge-backdrop').style.display = 'block';
+  document.getElementById('merge-dialog').style.display   = 'block';
+}
+
+function cancelMerge() {
+  pendingMergeFrom = null;
+  pendingMergeTo   = null;
+  document.getElementById('merge-backdrop').style.display = 'none';
+  document.getElementById('merge-dialog').style.display   = 'none';
+}
+
+function confirmMerge() {
+  if (!pendingMergeFrom || !pendingMergeTo) return;
+  const fromCid = pendingMergeFrom, toCid = pendingMergeTo;
+  cancelMerge();
+
+  const toLabel = getCluster(toCid).find(d => d.label)?.label ||
+                  getCluster(fromCid).find(d => d.label)?.label || null;
+  data.detections.forEach(det => {
+    if (String(det.cluster_id) === fromCid) {
+      det.cluster_id = +toCid;
+      if (toLabel) det.label = toLabel;
+    }
+  });
+
+  if (selectedCluster === fromCid) selectedCluster = toCid;
+  updateStats();
+  renderBrowser();
+  selectCluster(toCid);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -839,7 +1030,7 @@ function showDrawer(det) {
 ═══════════════════════════════════════════════════════════ */
 const tip = document.getElementById('tooltip');
 function showTip(e, det) {
-  if (isDragging) return; // never show tooltip during drag
+  if (isDragging || isDraggingCluster) return;
   const fi=frameIndexMap[det.frame_id]??'?', bb=det.bbox||{};
   tip.innerHTML=`<img class="tip-img" src="data:image/jpeg;base64,${det.crop_b64}"><div class="tip-body">
     <div class="tip-row"><span class="tip-key">type</span><span class="tip-val">${det.type}</span></div>
@@ -889,7 +1080,7 @@ document.addEventListener('click', e=>{ if(!ctx.contains(e.target)) hideCtx(); }
    KEYBOARD
 ═══════════════════════════════════════════════════════════ */
 document.addEventListener('keydown', e => {
-  if(e.key==='Escape'){hideCtx();document.getElementById('det-drawer').classList.remove('open')}
+  if(e.key==='Escape'){hideCtx();document.getElementById('det-drawer').classList.remove('open');cancelMerge();}
   const a=document.activeElement;
   if(['label-input','search-input'].includes(a.id)) return;
   if(e.key==='a'||e.key==='A') applyLabel('accepted');
