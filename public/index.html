@@ -477,7 +477,7 @@ function initFromEnriched(d) {
   document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
   if (rawArgusJson) updateRawArgusIndicator();
 
-  mergeSuggestions     = d.merge_suggestions || computeUmapSuggestions();
+  mergeSuggestions     = d.merge_suggestions?.length ? d.merge_suggestions : computeUmapSuggestions();
   dismissedSuggestions = new Set();
   suggestPanelOpen     = true;
 
@@ -1067,10 +1067,13 @@ function computeUmapSuggestions() {
     }
   }
 
-  // Threshold: bottom 15% of normalised distance
-  const sorted = [...pairs].sort((a, b) => a.dist - b.dist);
-  const threshold = sorted[Math.floor(sorted.length * 0.15)]?.dist ?? 0.15;
-  const close = pairs.filter(p => p.dist <= threshold);
+  // Use a fixed normalised threshold of 0.12; expand to 0.20 if nothing found
+  let threshold = 0.12;
+  let close = pairs.filter(p => p.dist <= threshold);
+  if (!close.length) {
+    threshold = 0.20;
+    close = pairs.filter(p => p.dist <= threshold);
+  }
 
   // Union-Find → connected components
   const parent = {};
