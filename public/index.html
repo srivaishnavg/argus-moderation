@@ -41,6 +41,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cl-card{border:1.5px solid var(--border);border-radius:6px;background:var(--bg2);transition:border-color .12s}
 .cl-card:hover:not(.selected){border-color:var(--border2)}
 .cl-card.selected{border-color:var(--accent)!important}
+@keyframes merge-flash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 3px rgba(96,165,250,.55),0 0 12px rgba(96,165,250,.25)}}
+.cl-card.merge-flash{animation:merge-flash .7s ease-out}
 .cl-card.drag-over{border-color:var(--green)!important;background:#0a1f12}
 .cl-card.accepted-card{border-color:#2d6b42}
 .cl-card.rejected-card{border-color:#6b2d2d}
@@ -748,10 +750,12 @@ function selectCluster(cid) {
   focusedDetId = null;
   document.getElementById('sugg-review-bar').style.display = 'none';
 
-  // update selected highlight in browser
+  // update selected highlight in browser and scroll into view
   document.querySelectorAll('.cl-card').forEach(el => {
     el.classList.toggle('selected', el.dataset.cid === cid);
   });
+  const selectedCard = document.querySelector(`.cl-card[data-cid="${cid}"]`);
+  if (selectedCard) selectedCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
   const dets  = getCluster(cid);
   const label = dets.find(d => d.label)?.label || '';
@@ -1071,8 +1075,17 @@ function confirmMerge() {
   renderBrowser();
   selectCluster(toCid);
 
-  // when triggered by a suggestion, focus the label input for immediate labeling
-  if (suggIdx !== null) requestAnimationFrame(() => document.getElementById('label-input').focus());
+  // flash the merged cluster card and, for suggestion merges, focus the label input
+  requestAnimationFrame(() => {
+    const card = document.querySelector(`.cl-card[data-cid="${toCid}"]`);
+    if (card) {
+      card.classList.remove('merge-flash');
+      void card.offsetWidth; // force reflow so re-adding the class restarts the animation
+      card.classList.add('merge-flash');
+      card.addEventListener('animationend', () => card.classList.remove('merge-flash'), { once: true });
+    }
+    if (suggIdx !== null) document.getElementById('label-input').focus();
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
