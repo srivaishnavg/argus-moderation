@@ -1211,11 +1211,11 @@ function computeUmapSuggestions() {
 
   const cdist = (a, b) => Math.hypot(centroids[a].x - centroids[b].x, centroids[a].y - centroids[b].y);
 
-  // Median NN distance as base; use median × 1.5 as outer threshold
+  // Median NN distance as base; use median × 2.0 as outer threshold
   const nnDists = cids.map(ci => Math.min(...cids.filter(cj => cj !== ci).map(cj => cdist(ci, cj))));
   const sorted  = [...nnDists].sort((a, b) => a - b);
   const median  = sorted[Math.floor(sorted.length / 2)];
-  const threshold = median * 1.5;
+  const threshold = median * 2.0;
 
   // Candidate pairs within threshold sorted closest-first
   const pairs = [];
@@ -1227,10 +1227,10 @@ function computeUmapSuggestions() {
   if (!pairs.length) return [];
   pairs.sort((a, b) => a.d - b.d);
 
-  // Complete-linkage agglomerative clustering:
-  // two groups merge only if EVERY cross-pair is within threshold.
-  // This allows large groups when all members are genuinely similar,
-  // while blocking chain-linking (A close to B, B close to C, but A far from C).
+  // Average-linkage agglomerative clustering:
+  // two groups merge if the AVERAGE of all cross-pair distances is within threshold.
+  // More permissive than complete-linkage (one distant outlier pair no longer vetoes
+  // the whole merge) while still more principled than single-linkage (no chain-linking).
   const groupOf  = {};   // cid → groupId
   const members  = {};   // groupId → Set<cid>
   cids.forEach(k => { groupOf[k] = k; members[k] = new Set([k]); });
@@ -1239,10 +1239,10 @@ function computeUmapSuggestions() {
     const gi = groupOf[ci], gj = groupOf[cj];
     if (gi === gj) continue;
     const mi = members[gi], mj = members[gj];
-    // Complete-linkage check
-    let ok = true;
-    outer: for (const a of mi) for (const b of mj) if (cdist(a, b) > threshold) { ok = false; break outer; }
-    if (!ok) continue;
+    // Average-linkage check: mean of all cross-pair distances
+    let total = 0, cnt = 0;
+    for (const a of mi) for (const b of mj) { total += cdist(a, b); cnt++; }
+    if (total / cnt > threshold) continue;
     // Merge gj into gi
     for (const m of mj) { groupOf[m] = gi; mi.add(m); }
     delete members[gj];
@@ -1264,7 +1264,7 @@ function computeUmapSuggestions() {
     suggestions.push({ group: grp.map(Number).sort((a, b) => a - b), similarity: +sim.toFixed(3) });
   });
 
-  console.log(`[suggestions] threshold=${threshold.toFixed(3)} → ${suggestions.length} complete-linkage groups`);
+  console.log(`[suggestions] avg-linkage threshold=${threshold.toFixed(3)} → ${suggestions.length} groups`);
   return suggestions.sort((a, b) => b.similarity - a.similarity);
 }
 
