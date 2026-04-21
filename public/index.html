@@ -180,12 +180,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .suggest-item.active{background:rgba(107,86,26,.22);border-left:2px solid var(--amber);padding-left:8px}
 .sugg-review-bar{padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:rgba(107,86,26,.1)}
 .srb-hint{font-family:var(--mono);font-size:10px;color:var(--text3);flex:1}
-.sugg-section-head{grid-column:1/-1;display:flex;align-items:center;gap:6px;padding:6px 2px 4px;margin-top:4px}
+.sugg-cluster-zone{grid-column:1/-1;border-radius:4px;padding:2px;transition:background .1s,outline .1s}
+.sugg-cluster-zone.drag-over{background:rgba(96,165,250,.07);outline:1px dashed var(--accent)}
+.sugg-section-head{display:flex;align-items:center;gap:6px;padding:6px 2px 4px;margin-top:4px}
 .sugg-section-head:first-child{margin-top:0}
 .sugg-head-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .sugg-head-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text)}
 .sugg-head-lbl{font-family:var(--mono);font-size:10px;color:var(--text2)}
 .sugg-head-count{font-family:var(--mono);font-size:10px;color:var(--text3);margin-left:auto}
+.sugg-eject-btn{font-family:var(--mono);font-size:9px;padding:2px 5px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;margin-left:6px;line-height:1;flex-shrink:0}
+.sugg-eject-btn:hover{color:var(--red);border-color:var(--red)}
+.suggest-badge-eject{font-size:9px;color:var(--text3);cursor:pointer;padding:0 1px;line-height:1;border-radius:2px}
+.suggest-badge-eject:hover{color:var(--red)}
 .sugg-section-sep{grid-column:1/-1;height:1px;background:var(--border);margin:6px 0}
 .sugg-imgs-sub{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:5px;margin-bottom:2px}
 /* ── multi-select ── */
@@ -858,11 +864,15 @@ function makeDraggable(el, det, fromCid) {
       document.getElementById('drag-ghost').style.transform =
         `translate(${e.clientX - 26}px, ${e.clientY - 26}px)`;
 
-      // highlight cluster card under cursor
+      // highlight drop target — left-panel cluster card OR sugg zone in merge preview
       document.querySelectorAll('.cl-card.drag-over').forEach(c => c.classList.remove('drag-over'));
-      const under = getClusterCardAt(e.clientX, e.clientY);
-      if (under && under.dataset.cid !== String(det.cluster_id)) {
-        under.classList.add('drag-over');
+      document.querySelectorAll('.sugg-cluster-zone.drag-over').forEach(c => c.classList.remove('drag-over'));
+      if (previewingSuggestion !== null) {
+        const zone = getSuggZoneAt(e.clientX, e.clientY);
+        if (zone && zone.dataset.cid !== String(det.cluster_id)) zone.classList.add('drag-over');
+      } else {
+        const under = getClusterCardAt(e.clientX, e.clientY);
+        if (under && under.dataset.cid !== String(det.cluster_id)) under.classList.add('drag-over');
       }
     };
 
@@ -874,13 +884,19 @@ function makeDraggable(el, det, fromCid) {
       el.style.opacity = '';
 
       if (started) {
-        // find drop target
         const ghost = document.getElementById('drag-ghost');
         ghost.style.display = 'none';
         document.querySelectorAll('.cl-card.drag-over').forEach(c => c.classList.remove('drag-over'));
+        document.querySelectorAll('.sugg-cluster-zone.drag-over').forEach(c => c.classList.remove('drag-over'));
 
-        const under = getClusterCardAt(e.clientX, e.clientY);
-        const toCid = under?.dataset?.cid;
+        // In merge preview, drop onto sugg zones; otherwise onto left-panel cluster cards
+        let toCid = null;
+        if (previewingSuggestion !== null) {
+          toCid = getSuggZoneAt(e.clientX, e.clientY)?.dataset?.cid;
+        }
+        if (!toCid) {
+          toCid = getClusterCardAt(e.clientX, e.clientY)?.dataset?.cid;
+        }
         if (toCid && toCid !== String(det.cluster_id)) {
           moveDet(det.detection_id, String(det.cluster_id), toCid);
         }
@@ -908,6 +924,17 @@ function getClusterCardAt(x, y) {
   ghost.style.visibility = 'visible';
   cghost.style.visibility = 'visible';
   return el?.closest('.cl-card') || null;
+}
+
+function getSuggZoneAt(x, y) {
+  const ghost = document.getElementById('drag-ghost');
+  const cghost = document.getElementById('cluster-drag-ghost');
+  ghost.style.visibility = 'hidden';
+  cghost.style.visibility = 'hidden';
+  const el = document.elementFromPoint(x, y);
+  ghost.style.visibility = 'visible';
+  cghost.style.visibility = 'visible';
+  return el?.closest('.sugg-cluster-zone') || null;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1123,9 +1150,33 @@ function moveDet(detId, fromCid, toCid) {
       document.getElementById('action-bar').style.display='none';
     }
   } else if (previewingSuggestion !== null) {
-    // suggestion preview shows multiple clusters — remove the card directly
+    // Merge preview: surgically update source and target sugg zones
     const card = document.querySelector(`#detail-grid .det-card[data-det-id="${detId}"]`);
     if (card) card.remove();
+
+    // Refresh source zone count + show empty state if drained
+    const fromZone = document.querySelector(`.sugg-cluster-zone[data-cid="${fromCid}"]`);
+    if (fromZone) {
+      const fromDets = getCluster(fromCid);
+      const countEl = fromZone.querySelector('.sugg-head-count');
+      if (countEl) countEl.textContent = `${fromDets.length} det${fromDets.length !== 1 ? 's' : ''}`;
+      const sub = fromZone.querySelector('.sugg-imgs-sub');
+      if (sub && fromDets.length === 0) {
+        sub.innerHTML = `<div style="grid-column:1/-1;font-family:var(--mono);font-size:10px;color:var(--text3);padding:4px 0">empty — drag detections here or remove cluster</div>`;
+      }
+    }
+
+    // Add the card to the target zone if it's part of the suggestion
+    const toZone = document.querySelector(`.sugg-cluster-zone[data-cid="${toCid}"]`);
+    if (toZone) {
+      const toSub = toZone.querySelector('.sugg-imgs-sub');
+      const toDets = getCluster(toCid);
+      // Clear empty-state placeholder if present
+      if (toSub && toDets.length === 1) toSub.innerHTML = '';
+      if (toSub) buildDetCard(det, toCid, toSub);
+      const toCountEl = toZone.querySelector('.sugg-head-count');
+      if (toCountEl) toCountEl.textContent = `${toDets.length} det${toDets.length !== 1 ? 's' : ''}`;
+    }
   }
 }
 
@@ -1301,14 +1352,19 @@ function renderSuggestions() {
   const listHTML = active.map(s => {
     const existingCids = new Set(getClusterIds());
     const validGroup = s.group.filter(cid => existingCids.has(String(cid)));
+    const isActive = s.origIdx === previewingSuggestion;
     const badges = validGroup.map(cid => {
       const col   = ccolor(+cid);
       const dets  = getCluster(String(cid));
       const label = dets.find(d => d.label)?.label || '';
+      const eject = isActive && validGroup.length > 2
+        ? `<span class="suggest-badge-eject" onclick="event.stopPropagation();removeFromSuggestion(${s.origIdx},${cid})" title="Remove C${cid} from this suggestion">✕</span>`
+        : '';
       return `<span class="suggest-badge">
         <span class="suggest-bdot" style="background:${col}"></span>
         ${+cid === -1 ? '⊘' : 'C' + cid}${label ? ' · ' + label : ''}
         <span style="color:var(--text3)">(${dets.length})</span>
+        ${eject}
       </span>`;
     }).join('<span style="color:var(--text3);font-size:10px;padding:0 1px">+</span>');
 
@@ -1365,9 +1421,28 @@ function dismissAllSuggestions() {
   renderSuggestions();
 }
 
+function removeFromSuggestion(origIdx, cid) {
+  const s = mergeSuggestions[origIdx];
+  if (!s) return;
+  // Remove the cluster from this suggestion's group
+  s.group = s.group.filter(c => String(c) !== String(cid));
+  if (s.group.length < 2) {
+    // Group too small to suggest — dismiss it entirely
+    dismissSuggestion(origIdx);
+  } else {
+    // Re-preview to refresh both panels
+    previewSuggestion(origIdx);
+  }
+}
+
 function previewSuggestion(origIdx) {
   previewingSuggestion = origIdx;
   renderSuggestions();
+  // Scroll the active suggestion row into view after the DOM re-renders
+  requestAnimationFrame(() => {
+    const activeRow = document.querySelector('.suggest-item.active');
+    if (activeRow) activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
   const s = mergeSuggestions[origIdx];
   if (!s) return;
   const existingCids = new Set(getClusterIds());
@@ -1392,28 +1467,12 @@ function previewSuggestion(origIdx) {
   document.getElementById('srb-merge-btn').onclick = () => startSuggestedMerge(origIdx);
   document.getElementById('srb-dismiss-btn').onclick = () => dismissSuggestion(origIdx);
 
-  // render clusters in the detail grid — each cluster gets its own sub-grid so
-  // image cards are never direct siblings of grid-column:1/-1 section headers
+  // render clusters in the detail grid — each cluster is wrapped in a
+  // .sugg-cluster-zone so it acts as a drag-drop target for moving detections
   const grid = document.getElementById('detail-grid');
   grid.innerHTML = '';
   validGroup.forEach((cid, i) => {
-    const dets  = getCluster(String(cid));
-    const col   = ccolor(+cid);
-    const label = dets.find(d => d.label)?.label || '';
-
-    const head = document.createElement('div');
-    head.className = 'sugg-section-head';
-    head.innerHTML = `<span class="sugg-head-dot" style="background:${col}"></span>
-      <span class="sugg-head-name">${+cid === -1 ? '⊘ noise' : 'C' + cid}</span>
-      ${label ? `<span class="sugg-head-lbl">· ${label}</span>` : ''}
-      <span class="sugg-head-count">${dets.length} det${dets.length !== 1 ? 's' : ''}</span>`;
-    grid.appendChild(head);
-
-    const sub = document.createElement('div');
-    sub.className = 'sugg-imgs-sub';
-    dets.forEach(det => buildDetCard(det, String(cid), sub));
-    grid.appendChild(sub);
-
+    buildSuggZone(grid, cid, origIdx, validGroup);
     if (i < validGroup.length - 1) {
       const sep = document.createElement('div');
       sep.className = 'sugg-section-sep';
@@ -1421,6 +1480,35 @@ function previewSuggestion(origIdx) {
     }
   });
   grid.scrollTop = 0;
+}
+
+function buildSuggZone(grid, cid, origIdx, validGroup) {
+  const dets  = getCluster(String(cid));
+  const col   = ccolor(+cid);
+  const label = dets.find(d => d.label)?.label || '';
+
+  const zone = document.createElement('div');
+  zone.className = 'sugg-cluster-zone';
+  zone.dataset.cid = String(cid);
+
+  const head = document.createElement('div');
+  head.className = 'sugg-section-head';
+  head.innerHTML = `<span class="sugg-head-dot" style="background:${col}"></span>
+    <span class="sugg-head-name">${+cid === -1 ? '⊘ noise' : 'C' + cid}</span>
+    ${label ? `<span class="sugg-head-lbl">· ${label}</span>` : ''}
+    <span class="sugg-head-count">${dets.length} det${dets.length !== 1 ? 's' : ''}</span>
+    <button class="sugg-eject-btn" onclick="removeFromSuggestion(${origIdx},${cid})" title="Remove C${cid} from this suggestion">remove ✕</button>`;
+  zone.appendChild(head);
+
+  const sub = document.createElement('div');
+  sub.className = 'sugg-imgs-sub';
+  if (dets.length === 0) {
+    sub.innerHTML = `<div style="grid-column:1/-1;font-family:var(--mono);font-size:10px;color:var(--text3);padding:4px 0">empty — drag detections here or remove cluster</div>`;
+  } else {
+    dets.forEach(det => buildDetCard(det, String(cid), sub));
+  }
+  zone.appendChild(sub);
+  grid.appendChild(zone);
 }
 
 function startSuggestedMerge(origIdx) {
@@ -1535,19 +1623,34 @@ const ctx = document.getElementById('ctx-menu');
 let ctxDet=null, ctxFromCid=null;
 function showCtx(e, det, fromCid) {
   hideTip(); ctxDet=det; ctxFromCid=fromCid;
-  const others = getClusterIds().filter(k=>k!==String(det.cluster_id));
-  const items  = others.map(k=>{
+  const detCid = String(det.cluster_id);
+
+  // In merge preview, show the other clusters in the suggestion group first
+  let suggGroupIds = [];
+  if (previewingSuggestion !== null) {
+    const s = mergeSuggestions[previewingSuggestion];
+    if (s) suggGroupIds = s.group.map(String).filter(k => k !== detCid);
+  }
+
+  const allOthers = getClusterIds().filter(k => k !== detCid);
+  const suggItems = suggGroupIds.map(k => {
+    const l=getCluster(k).find(d=>d.label)?.label||'', col=ccolor(+k), n=getCluster(k).length;
+    return`<div class="ctx-item" onclick="moveDet('${det.detection_id}','${fromCid}','${k}');hideCtx()"><span style="color:${col}">●</span>C${k}${l?' · '+l:''} <span style="color:var(--text3);font-size:9px">(${n})</span></div>`;
+  }).join('');
+  const otherItems = allOthers.filter(k => !suggGroupIds.includes(k)).map(k => {
     const l=getCluster(k).find(d=>d.label)?.label||'', col=ccolor(+k), n=getCluster(k).length;
     return`<div class="ctx-item" onclick="moveDet('${det.detection_id}','${fromCid}','${k}');hideCtx()"><span style="color:${col}">●</span>${+k===-1?'noise':'C'+k}${l?' · '+l:''} <span style="color:var(--text3);font-size:9px">(${n})</span></div>`;
   }).join('');
+
   ctx.innerHTML=`
     <div class="ctx-head">${det.argus_class||det.type} · f${frameIndexMap[det.frame_id]??'?'}</div>
     <div class="ctx-sep"></div>
     <div class="ctx-item" onclick="showDrawer(ctxDet);hideCtx()"><span style="opacity:.5">◎</span> view details + move</div>
     <div class="ctx-sep"></div>
     <div class="ctx-item danger" onclick="moveDet('${det.detection_id}','${fromCid}','-1');hideCtx()"><span style="opacity:.5">✕</span> remove → noise</div>
-    ${others.filter(k=>k!=='-1').length?`<div class="ctx-sep"></div><div class="ctx-head">move to cluster</div><div class="ctx-sub">${items}</div>`:''}`;
-  const mw=190, mh=Math.min(300,100+others.length*30);
+    ${suggItems ? `<div class="ctx-sep"></div><div class="ctx-head" style="color:var(--amber)">move within suggestion</div><div class="ctx-sub">${suggItems}</div>` : ''}
+    ${otherItems ? `<div class="ctx-sep"></div><div class="ctx-head">move to cluster</div><div class="ctx-sub">${otherItems}</div>` : ''}`;
+  const mw=190, mh=Math.min(300,100+allOthers.length*30);
   ctx.style.left=(e.clientX+mw>window.innerWidth?e.clientX-mw:e.clientX)+'px';
   ctx.style.top=(e.clientY+mh>window.innerHeight?e.clientY-mh:e.clientY)+'px';
   ctx.classList.add('open');
