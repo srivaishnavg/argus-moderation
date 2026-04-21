@@ -116,6 +116,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .merge-row{display:flex;gap:6px;align-items:center}
 .merge-sel{font-family:var(--mono);font-size:11px;padding:5px 7px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none;flex:1}
 .merge-sel:focus{border-color:var(--amber)}
+.loc-row{display:flex;gap:6px;align-items:center}
+.loc-input{font-family:var(--mono);font-size:11px;padding:6px 9px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);outline:none;flex:1}
+.loc-input:focus{border-color:var(--accent)}
+.loc-set-btn{font-family:var(--mono);font-size:10px;padding:5px 10px;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;white-space:nowrap;flex-shrink:0}
+.loc-set-btn:hover{background:rgba(96,165,250,.12)}
+.loc-clear-btn{font-family:var(--mono);font-size:10px;padding:5px 8px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;flex-shrink:0}
+.loc-clear-btn:hover{color:var(--red);border-color:var(--red)}
+.loc-badge{font-family:var(--mono);font-size:10px;color:var(--accent);background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.3);border-radius:3px;padding:2px 7px;display:inline-block}
 
 /* upload */
 .upload-screen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
@@ -320,6 +328,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <button class="btn defer" onclick="applyLabel('deferred')">? defer</button>
         </div>
         <div>
+          <div class="field-label">location — applied to LOGO detections on export</div>
+          <div id="loc-current" style="display:none;margin-bottom:4px"></div>
+          <div class="loc-row">
+            <input class="loc-input" id="loc-input" list="loc-datalist" placeholder="e.g. baseline_apron, pole_pad …">
+            <datalist id="loc-datalist"></datalist>
+            <button class="loc-set-btn" onclick="setClusterLocation()">set ↵</button>
+            <button class="loc-clear-btn" id="loc-clear-btn" onclick="clearClusterLocation()" style="display:none">✕</button>
+          </div>
+        </div>
+        <div>
           <div class="field-label">merge entire cluster into →</div>
           <div class="merge-row">
             <select class="merge-sel" id="merge-select"></select>
@@ -370,6 +388,8 @@ let postSuggMergePos     = null;      // suggestion list position to return to a
 let selectedClusters     = new Set(); // multi-select
 let browserFilter        = 'all';     // 'all' | 'unlabeled' | 'labeled' | 'noise'
 let focusedDetId         = null;      // keyboard-navigable focused detection card
+let clusterLocations     = {};        // { clusterId: "baseline_apron", ... }
+let knownLocationClasses = [];        // unique LOCATION classes from rawArgusJson
 
 const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
   '#f97316','#ec4899','#10b981','#f59e0b','#6366f1','#84cc16','#06b6d4',
@@ -512,9 +532,26 @@ function isArgusTaskJson(j) {
 /* ═══════════════════════════════════════════════════════════
    INIT
 ═══════════════════════════════════════════════════════════ */
+function extractLocationClasses(argusJson) {
+  const classes = new Set();
+  (argusJson?.result?.frames || []).forEach(frame => {
+    (frame.detections || []).forEach(det => {
+      if (det.type === 'LOCATION' && det.class) classes.add(det.class);
+    });
+  });
+  return [...classes].sort();
+}
+
+function populateLocDatalist() {
+  const dl = document.getElementById('loc-datalist');
+  if (!dl) return;
+  dl.innerHTML = knownLocationClasses.map(c => `<option value="${c}">`).join('');
+}
+
 function initFromEnriched(d) {
   data = d;
-  rawArgusJson = d._raw_argus || null;
+  rawArgusJson     = d._raw_argus || null;
+  clusterLocations = d._cluster_locations || {};
 
   frameIndexMap = {};
   const hasIdx = d.detections.every(det => det.frame_index != null);
@@ -527,10 +564,15 @@ function initFromEnriched(d) {
     Object.entries(seen).forEach(([fid,t]) => { frameIndexMap[fid] = Math.round(t / srMs); });
   }
 
+  if (rawArgusJson) {
+    knownLocationClasses = extractLocationClasses(rawArgusJson);
+    updateRawArgusIndicator();
+  }
+  populateLocDatalist();
+
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('app-shell').style.display = 'flex';
   document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
-  if (rawArgusJson) updateRawArgusIndicator();
 
   mergeSuggestions     = computeUmapSuggestions();
   dismissedSuggestions = new Set();
@@ -778,7 +820,43 @@ function selectCluster(cid) {
   document.getElementById('merge-select').innerHTML = getClusterIds().filter(k=>k!==cid)
     .map(k=>{const l=getCluster(k).find(d=>d.label)?.label||'';const n=getCluster(k).length;return`<option value="${k}">${+k===-1?'noise':'C'+k}${l?' · '+l:''} (${n})</option>`;}).join('');
 
+  renderLocationUI(cid);
   renderDetailGrid(cid);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LOCATION UI
+═══════════════════════════════════════════════════════════ */
+function renderLocationUI(cid) {
+  const loc        = clusterLocations[String(cid)] || '';
+  const currentEl  = document.getElementById('loc-current');
+  const inputEl    = document.getElementById('loc-input');
+  const clearBtn   = document.getElementById('loc-clear-btn');
+  if (!currentEl) return;
+  if (loc) {
+    currentEl.style.display = 'block';
+    currentEl.innerHTML = `<span class="loc-badge">📍 ${loc}</span>`;
+    inputEl.value = loc;
+    clearBtn.style.display = 'inline-block';
+  } else {
+    currentEl.style.display = 'none';
+    inputEl.value = '';
+    clearBtn.style.display = 'none';
+  }
+}
+
+function setClusterLocation() {
+  if (!selectedCluster) return;
+  const val = document.getElementById('loc-input').value.trim();
+  if (!val) return;
+  clusterLocations[String(selectedCluster)] = val;
+  renderLocationUI(selectedCluster);
+}
+
+function clearClusterLocation() {
+  if (!selectedCluster) return;
+  delete clusterLocations[String(selectedCluster)];
+  renderLocationUI(selectedCluster);
 }
 
 function renderDetailGrid(cid) {
@@ -1665,6 +1743,10 @@ document.addEventListener('click', e=>{ if(!ctx.contains(e.target)) hideCtx(); }
 document.getElementById('label-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); applyLabel('accepted'); document.getElementById('label-input').blur(); }
 });
+// Enter in location input → set location
+document.getElementById('loc-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); setClusterLocation(); document.getElementById('loc-input').blur(); }
+});
 
 document.addEventListener('keydown', e => {
   if(e.key==='Escape'){hideCtx();document.getElementById('det-drawer').classList.remove('open');cancelMerge();setFocusedDet(null);}
@@ -1675,7 +1757,7 @@ document.addEventListener('keydown', e => {
   }
 
   const a=document.activeElement;
-  if(['label-input','search-input'].includes(a.id)) return;
+  if(['label-input','search-input','loc-input'].includes(a.id)) return;
   if(e.key==='a'||e.key==='A') applyLabel('accepted');
   if(e.key==='r'||e.key==='R') applyLabel('rejected');
   if(e.key==='d'||e.key==='D') applyLabel('deferred');
@@ -1728,6 +1810,7 @@ function exportEnriched() {
     n_detections: data.detections.length,
     n_labeled: data.detections.filter(d=>d.label_status!=='unlabeled').length,
     merge_suggestions: mergeSuggestions,
+    _cluster_locations: clusterLocations,
     detections: data.detections.map(det=>({
       detection_id: det.detection_id, frame_id: det.frame_id,
       frame_index: frameIndexMap[det.frame_id]??null,
@@ -1768,6 +1851,50 @@ function exportArgus() {
 
   let outputJson;
 
+  // Build location map: detection_id → locationClass for eligible detections
+  const locationMap = {};
+  data.detections.forEach(det => {
+    const loc = clusterLocations[String(det.cluster_id)];
+    if (!loc) return;
+    // LOGO always eligible; TEXT only if accepted (will be promoted to LOGO)
+    if (det.type === 'LOGO' || (det.type === 'TEXT' && det.label_status === 'accepted')) {
+      locationMap[det.detection_id] = loc;
+    }
+  });
+
+  function injectLocations(frames) {
+    frames.forEach(frame => {
+      const toAdd = [];
+      (frame.detections || []).forEach(det => {
+        const locClass = locationMap[det.id];
+        if (!locClass) return;
+        // Skip if already has this location
+        if ((det.locations || []).some(l => l.class === locClass)) return;
+        // Mark old linked LOCATION detections as deleted
+        (det.locations || []).forEach(locRef => {
+          const old = frame.detections.find(d => d.id === locRef.id);
+          if (old) { old.isDeleted = true; old.edit_timestamp = ts; }
+        });
+        // Create new LOCATION detection cloned from LOGO bbox
+        const newId = crypto.randomUUID();
+        toAdd.push({
+          id: newId, type: 'LOCATION',
+          source: { type: 'LOCATION', modelId: '' },
+          boundingBox: { ...(det.boundingBox || det.bbox || {}) },
+          logo_quality: null, class: locClass,
+          overlay: false, locations: [], text: '',
+          confidence: 1.0, manualSource: 'ClusterModeration',
+          isDeleted: false, isManuallyEdited: true, edit_timestamp: ts,
+        });
+        // Link new LOCATION to this detection
+        det.locations = [{ id: newId, class: locClass, manualSource: 'ClusterModeration' }];
+        det.isManuallyEdited = true;
+        det.edit_timestamp = ts;
+      });
+      frame.detections.push(...toAdd);
+    });
+  }
+
   if (rawArgusJson) {
     // Have original — deep clone and patch in-place
     outputJson = JSON.parse(JSON.stringify(rawArgusJson));
@@ -1776,6 +1903,7 @@ function exportArgus() {
         if (labelMap[det.id]) patch(det, labelMap[det.id], det.type);
       });
     });
+    injectLocations(outputJson.result.frames);
   } else {
     // Reconstruct Argus structure from enriched data
     const frameMap = {};
@@ -1805,13 +1933,16 @@ function exportArgus() {
       result: { mediaInfo: data.media_info, frames: Object.values(frameMap) },
       _note: 'Reconstructed — load original task JSON via "+ task JSON" button for full fidelity',
     };
+    injectLocations(outputJson.result.frames);
   }
 
   outputJson._annotation_summary = {
     exported_at: ts, tool: 'argus-cluster-moderation v3.1',
     has_original_task_json: !!rawArgusJson,
     labels_applied: Object.keys(labelMap).length,
+    locations_applied: Object.keys(locationMap).length,
     label_map: data.detections.reduce((acc,det)=>{ if(det.label&&det.label_status==='accepted'){acc[det.label]=(acc[det.label]||0)+1}; return acc; }, {}),
+    location_map: clusterLocations,
   };
 
   dl(JSON.stringify(outputJson,null,2), `argus_labeled_${(data.task_id||'export').substring(0,8)}.json`);
