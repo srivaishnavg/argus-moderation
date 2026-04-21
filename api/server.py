@@ -30,10 +30,11 @@ log.info(f"PORT={os.getenv('PORT', '8000')}")
 
 import numpy as np
 import requests
+from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from PIL import Image
+from fastapi.responses import JSONResponse, FileResponse, Response
+from PIL import Image, ImageDraw
 
 log.info("Core imports OK")
 
@@ -51,6 +52,56 @@ app.add_middleware(
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+# ── module-level frame image cache (survives across requests) ──────────────────
+_FRAME_CACHE: OrderedDict = OrderedDict()
+_FRAME_CACHE_MAX = 120   # keep up to 120 unique frames in RAM
+
+def _get_cached_frame(url: str) -> Image.Image | None:
+    if url in _FRAME_CACHE:
+        _FRAME_CACHE.move_to_end(url)
+        return _FRAME_CACHE[url]
+    try:
+        img = download_image(url)
+        _FRAME_CACHE[url] = img
+        _FRAME_CACHE.move_to_end(url)
+        if len(_FRAME_CACHE) > _FRAME_CACHE_MAX:
+            _FRAME_CACHE.popitem(last=False)
+        return img
+    except Exception as exc:
+        log.warning(f"frame-preview: could not fetch {url}: {exc}")
+        return None
+
+@app.get("/api/frame-preview")
+def frame_preview(url: str, left: float, top: float, right: float, bottom: float):
+    """
+    Return the full frame JPEG with the detection bounding box drawn on it.
+    Used by the frontend hover tooltip for full-frame context view.
+    """
+    img = _get_cached_frame(url)
+    if img is None:
+        raise HTTPException(status_code=404, detail="Could not fetch frame image")
+
+    out = img.copy()
+    draw = ImageDraw.Draw(out)
+    # Draw a 3px amber rectangle around the detection
+    for t in range(3):
+        draw.rectangle(
+            [left - t, top - t, right + t, bottom + t],
+            outline="#f59e0b",
+        )
+
+    # Scale down for the tooltip — max 480px wide, keep aspect ratio
+    max_w = 480
+    if out.width > max_w:
+        ratio = max_w / out.width
+        out = out.resize((max_w, int(out.height * ratio)), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    out.save(buf, format="JPEG", quality=82)
+    buf.seek(0)
+    return Response(content=buf.getvalue(), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 # ── serve frontend ─────────────────────────────────────────────────────────────
 # Resolve public dir relative to this file, works on Railway and locally
@@ -302,11 +353,10 @@ async def preprocess(request: Request):
 
         # download frame image (cached per URL)
         if frame_url not in frame_cache:
-            try:
-                frame_cache[frame_url] = download_image(frame_url)
-            except Exception as e:
-                log.warning(f"  Could not download {frame_url}: {e}")
-                frame_cache[frame_url] = None
+            # _get_cached_frame populates the module-level cache too,
+            # so hover previews are instant after preprocessing
+            img = _get_cached_frame(frame_url)
+            frame_cache[frame_url] = img  # may be None on failure
 
         frame_img = frame_cache[frame_url]
         if frame_img is None:

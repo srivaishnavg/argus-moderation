@@ -139,8 +139,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .how-to code{color:var(--accent);background:var(--bg3);padding:1px 5px;border-radius:3px;font-size:10px}
 
 /* tip */
-.tip{position:fixed;z-index:500;pointer-events:none;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--text2);display:none;width:230px;overflow:hidden}
-.tip-img{width:100%;height:100px;object-fit:cover;display:block;border-bottom:1px solid var(--border)}
+.tip{position:fixed;z-index:500;pointer-events:none;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--text2);display:none;width:320px;overflow:hidden}
+.tip-img{width:100%;max-height:220px;object-fit:contain;object-position:center;display:block;border-bottom:1px solid var(--border);background:#000}
 .tip-body{padding:7px 9px;display:flex;flex-direction:column;gap:3px}
 .tip-row{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
 .tip-key{color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
@@ -1676,20 +1676,26 @@ function showDrawer(det) {
 const tip = document.getElementById('tooltip');
 function showTip(e, det) {
   if (isDragging || isDraggingCluster) return;
-  const fi=frameIndexMap[det.frame_id]??'?', bb=det.bbox||{};
-  tip.innerHTML=`<img class="tip-img" src="data:image/jpeg;base64,${det.crop_b64}"><div class="tip-body">
-    <div class="tip-row"><span class="tip-key">type</span><span class="tip-val">${det.type}</span></div>
-    <div class="tip-row"><span class="tip-key">argus class</span><span class="tip-val" style="color:var(--accent)">${det.argus_class||'—'}</span></div>
-    <div class="tip-row"><span class="tip-key">frame</span><span class="tip-val">f${fi} · t=${det.frame_time??'—'}s</span></div>
-    <div class="tip-row"><span class="tip-key">confidence</span><span class="tip-val">${(det.confidence*100).toFixed(1)}%</span></div>
-    <div class="tip-row"><span class="tip-key">bbox</span><span class="tip-val">⌈${Math.round(bb.left||0)},${Math.round(bb.top||0)}⌉→⌊${Math.round(bb.right||0)},${Math.round(bb.bottom||0)}⌋</span></div>
-  </div><div class="tip-url">${(det.frame_url||'').replace('https://','').substring(0,50)}…</div>`;
-  tip.style.display='block'; posTip(e);
+  const fi = frameIndexMap[det.frame_id] ?? '?';
+  const bb = det.bbox || {};
+  const imgSrc = det.frame_url
+    ? `/api/frame-preview?url=${encodeURIComponent(det.frame_url)}&left=${bb.left||0}&top=${bb.top||0}&right=${bb.right||0}&bottom=${bb.bottom||0}`
+    : `data:image/jpeg;base64,${det.crop_b64}`;
+  tip.innerHTML = `<img class="tip-img" src="${imgSrc}" onerror="this.src='data:image/jpeg;base64,${det.crop_b64}'">
+    <div class="tip-body">
+      <div class="tip-row"><span class="tip-key">type</span><span class="tip-val">${det.type}</span></div>
+      <div class="tip-row"><span class="tip-key">argus class</span><span class="tip-val" style="color:var(--accent)">${det.argus_class||'—'}</span></div>
+      <div class="tip-row"><span class="tip-key">frame</span><span class="tip-val">f${fi} · t=${det.frame_time??'—'}s</span></div>
+      <div class="tip-row"><span class="tip-key">confidence</span><span class="tip-val">${(det.confidence*100).toFixed(1)}%</span></div>
+      <div class="tip-row"><span class="tip-key">bbox</span><span class="tip-val">⌈${Math.round(bb.left||0)},${Math.round(bb.top||0)}⌉→⌊${Math.round(bb.right||0)},${Math.round(bb.bottom||0)}⌋</span></div>
+    </div>
+    <div class="tip-url">${(det.frame_url||'').replace('https://','').substring(0,55)}…</div>`;
+  tip.style.display = 'block'; posTip(e);
 }
 function hideTip() { tip.style.display='none'; }
 document.addEventListener('mousemove', e => { if(tip.style.display==='block') posTip(e); });
 function posTip(e) {
-  const tw=230,th=220;
+  const tw=320, th=320;
   tip.style.left=(e.clientX+14+tw>window.innerWidth?e.clientX-tw-6:e.clientX+14)+'px';
   tip.style.top=(e.clientY+th>window.innerHeight?window.innerHeight-th-6:e.clientY-10)+'px';
 }
