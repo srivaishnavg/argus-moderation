@@ -13,6 +13,18 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("argus")
 
+# Force numba to use a single thread so UMAP's SGD is fully deterministic.
+# With multiple threads the order of parallel updates varies per OS schedule,
+# producing different UMAP embeddings (and thus different HDBSCAN cluster
+# counts) for identical inputs despite random_state=42 being set.
+os.environ.setdefault("NUMBA_NUM_THREADS", "1")
+try:
+    import numba as _numba
+    _numba.set_num_threads(1)
+    log.info("numba thread count forced to 1 for deterministic UMAP")
+except Exception:
+    pass
+
 log.info("Starting Argus Cluster Moderation API...")
 log.info(f"PORT={os.getenv('PORT', '8000')}")
 
@@ -197,9 +209,12 @@ def run_umap_hdbscan(features: np.ndarray, n_neighbors: int, min_cluster_size: i
     import hdbscan as hdb
     n = len(features)
     n_neighbors = min(n_neighbors, max(2, n - 1))
+    np.random.seed(42)   # re-seed global numpy RNG so pynndescent is deterministic
     reducer = umap.UMAP(
         n_components=2, n_neighbors=n_neighbors,
         min_dist=0.1, metric="cosine", random_state=42,
+        init="random",   # spectral init uses non-deterministic BLAS eigensolver;
+                         # random init is fully seeded by random_state=42
     )
     coords_2d = reducer.fit_transform(features)
     clusterer = hdb.HDBSCAN(
