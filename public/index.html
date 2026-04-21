@@ -335,8 +335,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div id="md-to"></div>
   <div id="md-note"></div>
   <div id="md-actions">
-    <button id="md-cancel" onclick="cancelMerge()">Cancel</button>
-    <button id="md-confirm" onclick="confirmMerge()">Confirm Merge ↗</button>
+    <button id="md-cancel" onclick="cancelMerge()">Esc · Cancel</button>
+    <button id="md-confirm" onclick="confirmMerge()">↵ Confirm Merge ↗</button>
   </div>
 </div>
 <div class="tip" id="tooltip"></div>
@@ -1550,11 +1550,19 @@ document.getElementById('label-input').addEventListener('keydown', e => {
 
 document.addEventListener('keydown', e => {
   if(e.key==='Escape'){hideCtx();document.getElementById('det-drawer').classList.remove('open');cancelMerge();setFocusedDet(null);}
+
+  // ── merge confirmation dialog ──────────────────────────────
+  if(e.key==='Enter' && document.getElementById('merge-dialog').style.display==='block'){
+    e.preventDefault(); confirmMerge(); return;
+  }
+
   const a=document.activeElement;
   if(['label-input','search-input'].includes(a.id)) return;
   if(e.key==='a'||e.key==='A') applyLabel('accepted');
   if(e.key==='r'||e.key==='R') applyLabel('rejected');
   if(e.key==='d'||e.key==='D') applyLabel('deferred');
+
+  // ── focused detection: Delete removes, arrows navigate ────
   if(e.key==='Delete'&&focusedDetId){
     e.preventDefault();
     const det=data?.detections.find(d=>d.detection_id===focusedDetId);
@@ -1565,6 +1573,15 @@ document.addEventListener('keydown', e => {
     if(e.key==='ArrowRight'||e.key==='ArrowDown'){e.preventDefault();advanceDet(1);return;}
     if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();advanceDet(-1);return;}
   }
+
+  // ── suggestion preview: ↑↓ navigate rows, Enter = merge ──
+  if(previewingSuggestion!==null){
+    if(e.key==='ArrowDown'){e.preventDefault();advanceSuggestion(1);return;}
+    if(e.key==='ArrowUp'){e.preventDefault();advanceSuggestion(-1);return;}
+    if(e.key==='Enter'){e.preventDefault();startSuggestedMerge(previewingSuggestion);return;}
+  }
+
+  // ── default: Tab / ←→ navigate clusters ──────────────────
   if((e.key==='ArrowRight'||e.key==='Tab')&&!e.shiftKey){e.preventDefault();advanceCluster(1)}
   if((e.key==='ArrowLeft'||(e.key==='Tab'&&e.shiftKey))&&selectedCluster!=null){e.preventDefault();advanceCluster(-1)}
 });
@@ -1572,6 +1589,14 @@ function advanceCluster(dir) {
   const keys=getClusterIds().filter(k=>k!=='-1');
   const next=keys[keys.indexOf(String(selectedCluster))+dir];
   if(next!=null) selectCluster(next);
+}
+
+function advanceSuggestion(dir) {
+  const active = getActiveSuggestions();
+  if (!active.length) return;
+  const cur = previewingSuggestion !== null ? active.findIndex(s => s.origIdx === previewingSuggestion) : -1;
+  const next = Math.max(0, Math.min(active.length - 1, cur + dir));
+  if (next !== cur || cur === -1) previewSuggestion(active[next].origIdx);
 }
 
 /* ═══════════════════════════════════════════════════════════
