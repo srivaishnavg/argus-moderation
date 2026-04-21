@@ -520,7 +520,7 @@ function initFromEnriched(d) {
   document.getElementById('task-id-label').textContent = (d.task_id || '').substring(0, 24) + '…';
   if (rawArgusJson) updateRawArgusIndicator();
 
-  mergeSuggestions     = d.merge_suggestions?.length ? d.merge_suggestions : computeUmapSuggestions();
+  mergeSuggestions     = computeUmapSuggestions();
   dismissedSuggestions = new Set();
   suggestPanelOpen     = true;
 
