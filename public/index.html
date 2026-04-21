@@ -1167,40 +1167,60 @@ function computeUmapSuggestions() {
     };
   });
 
-  // For each cluster find its single nearest neighbor
-  const nn = {};
+  // NN distance per cluster
+  const nnDists = [];
   cids.forEach(ci => {
-    let minDist = Infinity, minCid = null;
+    let min = Infinity;
     cids.forEach(cj => {
       if (ci === cj) return;
       const d = Math.hypot(centroids[ci].x - centroids[cj].x, centroids[ci].y - centroids[cj].y);
-      if (d < minDist) { minDist = d; minCid = cj; }
+      if (d < min) min = d;
     });
-    nn[ci] = { cid: minCid, dist: minDist };
+    nnDists.push(min);
   });
 
-  // Only keep MUTUAL nearest-neighbor pairs (both point to each other).
-  // Since each cluster has exactly one NN, mutual pairs cannot chain-link into
-  // large groups — they are always independent pairs or tiny triangles.
-  const mnnPairs = [];
-  cids.forEach(ci => {
-    const { cid: cj, dist } = nn[ci];
-    if (cj && nn[cj]?.cid === ci && ci < cj) mnnPairs.push({ ci, cj, dist });
+  // Threshold = Q1 (25th percentile) of NN distances — tight enough to avoid
+  // chain-linking all clusters into one group, loose enough for groups of 3+
+  const sorted = [...nnDists].sort((a, b) => a - b);
+  const threshold = sorted[Math.floor(sorted.length * 0.25)];
+
+  // Collect pairs within threshold
+  const close = [];
+  for (let i = 0; i < cids.length; i++) {
+    for (let j = i + 1; j < cids.length; j++) {
+      const dist = Math.hypot(
+        centroids[cids[i]].x - centroids[cids[j]].x,
+        centroids[cids[i]].y - centroids[cids[j]].y
+      );
+      if (dist <= threshold) close.push({ ci: cids[i], cj: cids[j], dist });
+    }
+  }
+  if (!close.length) return [];
+
+  // Union-Find → connected components
+  const parent = {};
+  cids.forEach(k => { parent[k] = k; });
+  function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
+  function union(x, y) { parent[find(x)] = find(y); }
+  close.forEach(({ ci, cj }) => union(ci, cj));
+
+  const groups = {};
+  cids.forEach(k => {
+    const root = find(k);
+    if (!groups[root]) groups[root] = [];
+    groups[root].push(k);
   });
 
-  if (!mnnPairs.length) return [];
+  const suggestions = [];
+  Object.values(groups).forEach(group => {
+    if (group.length < 2) return;
+    const gPairs = close.filter(p => group.includes(p.ci) && group.includes(p.cj));
+    const avgDist = gPairs.reduce((s, p) => s + p.dist, 0) / gPairs.length;
+    const sim = Math.max(0.5, Math.min(0.99, 1 - avgDist / (threshold * 2)));
+    suggestions.push({ group: group.map(Number).sort((a, b) => a - b), similarity: +sim.toFixed(3) });
+  });
 
-  // Normalise similarity: closest pair → ~0.99, furthest → ~0.50
-  const maxDist = Math.max(...mnnPairs.map(p => p.dist));
-  const minDist = Math.min(...mnnPairs.map(p => p.dist));
-  const range   = maxDist - minDist || 1;
-
-  const suggestions = mnnPairs.map(({ ci, cj, dist }) => ({
-    group:      [Number(ci), Number(cj)].sort((a, b) => a - b),
-    similarity: +(0.99 - 0.49 * ((dist - minDist) / range)).toFixed(3),
-  }));
-
-  console.log(`[suggestions] ${cids.length} clusters → ${suggestions.length} mutual-NN pairs`);
+  console.log(`[suggestions] Q1=${threshold.toFixed(3)} → ${suggestions.length} groups`);
   return suggestions.sort((a, b) => b.similarity - a.similarity);
 }
 
