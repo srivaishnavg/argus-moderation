@@ -44,8 +44,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 @keyframes merge-flash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 3px rgba(96,165,250,.55),0 0 12px rgba(96,165,250,.25)}}
 .cl-card.merge-flash{animation:merge-flash .7s ease-out}
 .cl-card.drag-over{border-color:var(--green)!important;background:#0a1f12}
-.cl-card.accepted-card{border-color:#2d6b42}
-.cl-card.rejected-card{border-color:#6b2d2d}
+.cl-card.accepted-card{border:2.5px solid var(--green)}
+.cl-card.rejected-card{border:2.5px solid var(--red)}
 .cl-card.deferred-card{border-color:#6b561a}
 .cl-head{display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);user-select:none}
 .cl-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
@@ -607,8 +607,8 @@ function buildClusterCard(k, dets, label, status) {
     <div class="cl-head">
       <div class="cl-check" title="Click to select for merge">${isMultiSel?'✓':''}</div>
       <div class="cl-dot" style="background:${col}"></div>
-      <div class="cl-name">${+k===-1?'⊘ noise':'C'+k}</div>
       ${lblBadge}
+      <div class="cl-name">${+k===-1?'⊘ noise':'C'+k}</div>
       <div class="cl-count" id="cnt-${k}">${dets.length} det${dets.length!==1?'s':''}</div>
       <div>${noiseBtn}</div>
       <div class="cl-drag-handle" title="Drag to merge with another cluster">⠿</div>
