@@ -1662,6 +1662,7 @@ function showDrawer(det) {
     <div class="dr-row"><span class="dr-key">overlay</span><span class="dr-val">${det.overlay?'yes':'no'}</span></div>
     <div class="dr-row"><span class="dr-key">status</span><span class="dr-val" style="color:${sc}">${det.label_status}${det.label?' · '+det.label:''}</span></div>
     <div class="dr-row"><span class="dr-key">frame url</span><span class="dr-val"><a href="${det.frame_url}" target="_blank">${(det.frame_url||'').substring(0,42)}…</a></span></div>
+    <div class="dr-row"><span class="dr-key">argus portal</span><span class="dr-val"><a href="https://highfive-api.com/ai/tasks?task_id=${data.task_id}&shown_tab=frame&current_frame_index=${fi}" target="_blank">frame ${fi} ↗</a></span></div>
     <div class="dr-move">
       <span class="dr-key" style="margin-top:0">move to</span>
       <select class="dr-sel" id="dr-sel">${opts}</select>
@@ -1689,7 +1690,8 @@ function showTip(e, det) {
       <div class="tip-row"><span class="tip-key">confidence</span><span class="tip-val">${(det.confidence*100).toFixed(1)}%</span></div>
       <div class="tip-row"><span class="tip-key">bbox</span><span class="tip-val">⌈${Math.round(bb.left||0)},${Math.round(bb.top||0)}⌉→⌊${Math.round(bb.right||0)},${Math.round(bb.bottom||0)}⌋</span></div>
     </div>
-    <div class="tip-url">${(det.frame_url||'').replace('https://','').substring(0,55)}…</div>`;
+    <div class="tip-url">${(det.frame_url||'').replace('https://','').substring(0,55)}…</div>
+    <div class="tip-url" style="border-top:none;padding-top:0"><a href="https://highfive-api.com/ai/tasks?task_id=${data.task_id}&shown_tab=frame&current_frame_index=${fi}" target="_blank" style="color:var(--accent)">↗ open frame ${fi} in Argus portal</a></div>`;
   tip.style.display = 'block'; posTip(e);
 }
 function hideTip() { tip.style.display='none'; }

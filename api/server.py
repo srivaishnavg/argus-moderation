@@ -84,12 +84,12 @@ def frame_preview(url: str, left: float, top: float, right: float, bottom: float
 
     out = img.copy()
     draw = ImageDraw.Draw(out)
-    # Draw a 3px amber rectangle around the detection
-    for t in range(3):
-        draw.rectangle(
-            [left - t, top - t, right + t, bottom + t],
-            outline="#f59e0b",
-        )
+    # Draw a thick red rectangle around the detection
+    draw.rectangle(
+        [left, top, right, bottom],
+        outline="#ff3333",
+        width=5,
+    )
 
     # Scale down for the tooltip — max 480px wide, keep aspect ratio
     max_w = 480
@@ -101,17 +101,19 @@ def frame_preview(url: str, left: float, top: float, right: float, bottom: float
     out.save(buf, format="JPEG", quality=82)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="image/jpeg",
-                    headers={"Cache-Control": "public, max-age=86400"})
+                    headers={"Cache-Control": "no-store"})
 
 # ── serve frontend ─────────────────────────────────────────────────────────────
 # Resolve public dir relative to this file, works on Railway and locally
 PUBLIC_DIR = Path(__file__).parent.parent / "public"
 
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+
 @app.get("/")
 def root():
     index = PUBLIC_DIR / "index.html"
     if index.exists():
-        return FileResponse(str(index))
+        return FileResponse(str(index), headers=NO_CACHE_HEADERS)
     return {"status": "ok", "message": "Argus Cluster Moderation API — frontend not found"}
 
 @app.get("/{path:path}")
@@ -121,11 +123,11 @@ def static_files(path: str):
         raise HTTPException(status_code=404)
     f = PUBLIC_DIR / path
     if f.exists() and f.is_file():
-        return FileResponse(str(f))
+        return FileResponse(str(f), headers=NO_CACHE_HEADERS)
     # SPA fallback
     index = PUBLIC_DIR / "index.html"
     if index.exists():
-        return FileResponse(str(index))
+        return FileResponse(str(index), headers=NO_CACHE_HEADERS)
     raise HTTPException(status_code=404)
 
 # ── image helpers ──────────────────────────────────────────────────────────────
