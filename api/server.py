@@ -140,6 +140,29 @@ def extract_features(img: Image.Image) -> np.ndarray:
     return (feat / norm) if norm > 0 else feat
 
 
+def bbox_overlap_ratio(bbox_a: dict, bbox_b: dict) -> float:
+    """
+    Returns the fraction of bbox_a's area that is covered by bbox_b.
+    (intersection_area / bbox_a_area)
+    Used to suppress TEXT detections that fall largely inside a LOGO bbox.
+    """
+    al = int(bbox_a.get("left",   0))
+    at = int(bbox_a.get("top",    0))
+    ar = int(bbox_a.get("right",  al))
+    ab = int(bbox_a.get("bottom", at))
+    bl = int(bbox_b.get("left",   0))
+    bt = int(bbox_b.get("top",    0))
+    br = int(bbox_b.get("right",  bl))
+    bb = int(bbox_b.get("bottom", bt))
+    ix1, iy1 = max(al, bl), max(at, bt)
+    ix2, iy2 = min(ar, br), min(ab, bb)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    intersection = (ix2 - ix1) * (iy2 - iy1)
+    area_a = max(1, (ar - al) * (ab - at))
+    return intersection / area_a
+
+
 def compute_merge_suggestions(features_matrix: np.ndarray, labels: np.ndarray, threshold: float = 0.90) -> list:
     """
     Find clusters that are visually similar (cosine sim of feature centroids >= threshold).
@@ -250,10 +273,11 @@ async def preprocess(request: Request):
         raise HTTPException(status_code=400, detail="Not a valid Argus task JSON (missing result.frames)")
 
     # params from query string with defaults
-    params      = request.query_params
-    min_cluster = int(params.get("min_cluster_size", 2))
-    n_neighbors = int(params.get("umap_neighbors",   5))
-    types_param = params.get("types", "LOGO,TEXT").upper().split(",")
+    params            = request.query_params
+    min_cluster       = int(params.get("min_cluster_size",  2))
+    n_neighbors       = int(params.get("umap_neighbors",    5))
+    types_param       = params.get("types", "LOGO,TEXT").upper().split(",")
+    overlap_threshold = float(params.get("overlap_threshold", 0.5))
 
     task_id     = argus_json.get("taskId", "unknown")
     media_info  = argus_json.get("result", {}).get("mediaInfo", {})
@@ -290,6 +314,32 @@ async def preprocess(request: Request):
 
         detections = frame.get("detections", [])
         included   = [d for d in detections if d.get("type", "").upper() in types_param]
+
+        # Overlap suppression: skip non-LOGO detections whose bounding box is
+        # largely covered by a LOGO detection in the same frame.
+        # We always use ALL logo detections in the frame as the reference set,
+        # regardless of which types the user chose to cluster.
+        logo_bboxes = [
+            d.get("boundingBox", {})
+            for d in detections
+            if d.get("type", "").upper() == "LOGO"
+        ]
+        if logo_bboxes and overlap_threshold < 1.0:
+            before = len(included)
+            suppressed = []
+            kept = []
+            for d in included:
+                if d.get("type", "").upper() != "LOGO":
+                    bbox = d.get("boundingBox", {})
+                    if any(bbox_overlap_ratio(bbox, lb) >= overlap_threshold for lb in logo_bboxes):
+                        suppressed.append(d.get("id", "?")[:8])
+                        continue
+                kept.append(d)
+            included = kept
+            if suppressed:
+                log.info(f"  Overlap suppression removed {len(suppressed)} detection(s) "
+                         f"(threshold={overlap_threshold}): {suppressed}")
+
         log.info(f"  {len(detections)} detections → {len(included)} kept ({'/'.join(types_param)})")
 
         for det in included:
@@ -350,14 +400,15 @@ async def preprocess(request: Request):
         del rec["_feat"]
 
     return JSONResponse({
-        "task_id":           task_id,
-        "media_info":        media_info,
-        "sample_rate_ms":    sample_rate,
-        "n_detections":      len(records),
-        "n_clusters":        n_clusters,
-        "n_noise":           n_noise,
-        "min_cluster_size":  min_cluster,
-        "umap_neighbors":    n_neighbors,
-        "merge_suggestions": merge_suggestions,
-        "detections":        records,
+        "task_id":            task_id,
+        "media_info":         media_info,
+        "sample_rate_ms":     sample_rate,
+        "n_detections":       len(records),
+        "n_clusters":         n_clusters,
+        "n_noise":            n_noise,
+        "min_cluster_size":   min_cluster,
+        "umap_neighbors":     n_neighbors,
+        "overlap_threshold":  overlap_threshold,
+        "merge_suggestions":  merge_suggestions,
+        "detections":         records,
     })
