@@ -360,6 +360,7 @@ let mergeSuggestions     = [];
 let dismissedSuggestions  = new Set();
 let suggestPanelOpen      = true;
 let previewingSuggestion  = null;
+let postSuggMergePos     = null;      // suggestion list position to return to after post-merge labeling
 let selectedClusters     = new Set(); // multi-select
 let browserFilter        = 'all';     // 'all' | 'unlabeled' | 'labeled' | 'noise'
 let focusedDetId         = null;      // keyboard-navigable focused detection card
@@ -1068,7 +1069,11 @@ function confirmMerge() {
     if (selectedCluster === fromCid) selectedCluster = toCid;
   });
 
-  if (suggIdx !== null) dismissedSuggestions.add(suggIdx);
+  if (suggIdx !== null) {
+    const activeBefore = getActiveSuggestions();
+    postSuggMergePos = Math.max(0, activeBefore.findIndex(s => s.origIdx === suggIdx));
+    dismissedSuggestions.add(suggIdx);
+  }
   clearMultiSelect();
 
   updateStats();
@@ -1451,7 +1456,17 @@ function applyLabel(status) {
   });
   // update panel title
   document.getElementById('panel-title').textContent = (+selectedCluster===-1?'⊘ noise':'cluster '+selectedCluster)+(label?' · '+label:'');
-  // auto-advance to next unlabeled
+  // if this label was applied right after a suggestion merge, advance to the next suggestion
+  if (postSuggMergePos !== null) {
+    const savedPos = postSuggMergePos;
+    postSuggMergePos = null;
+    const active = getActiveSuggestions();
+    if (active.length > 0) {
+      setTimeout(() => previewSuggestion(active[Math.min(savedPos, active.length - 1)].origIdx), 80);
+    }
+    return;
+  }
+  // auto-advance to next unlabeled cluster
   const keys = getClusterIds().filter(k=>k!=='-1');
   const idx  = keys.indexOf(String(selectedCluster));
   for (let i=idx+1;i<keys.length;i++) {
