@@ -124,6 +124,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .loc-clear-btn{font-family:var(--mono);font-size:10px;padding:5px 8px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;flex-shrink:0}
 .loc-clear-btn:hover{color:var(--red);border-color:var(--red)}
 .loc-badge{font-family:var(--mono);font-size:10px;color:var(--accent);background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.3);border-radius:3px;padding:2px 7px;display:inline-block}
+.loc-input:disabled{opacity:.4;cursor:not-allowed}
+.loc-set-btn:disabled{opacity:.4;cursor:not-allowed}
+.overlay-row{display:flex;align-items:center;gap:10px;padding:3px 0}
+.overlay-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.overlay-toggle input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#38bdf8;flex-shrink:0}
+.overlay-toggle-label{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.overlay-badge{font-family:var(--mono);font-size:10px;color:#38bdf8;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);border-radius:3px;padding:2px 7px;display:inline-block}
 
 /* upload */
 .upload-screen{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
@@ -338,6 +345,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           </div>
         </div>
         <div>
+          <div class="field-label">digital overlay</div>
+          <div class="overlay-row">
+            <label class="overlay-toggle">
+              <input type="checkbox" id="overlay-toggle" onchange="setClusterOverlay(selectedCluster, this.checked)">
+              <span class="overlay-toggle-label">IsDigitalOverlay</span>
+            </label>
+            <span class="overlay-badge" id="overlay-badge" style="display:none">overlay=true on export · location cleared</span>
+          </div>
+        </div>
+        <div>
           <div class="field-label">merge entire cluster into →</div>
           <div class="merge-row">
             <select class="merge-sel" id="merge-select"></select>
@@ -389,6 +406,7 @@ let selectedClusters     = new Set(); // multi-select
 let browserFilter        = 'all';     // 'all' | 'unlabeled' | 'labeled' | 'noise'
 let focusedDetId         = null;      // keyboard-navigable focused detection card
 let clusterLocations     = {};        // { clusterId: "baseline_apron", ... }
+let clusterOverlays      = new Set(); // Set of clusterIds marked as digital overlay
 let knownLocationClasses = [];        // unique LOCATION classes from rawArgusJson
 
 const COLORS = ['#4f8ef7','#34a853','#ea4335','#fbbc04','#a78bfa','#38bdf8',
@@ -552,6 +570,7 @@ function initFromEnriched(d) {
   data = d;
   rawArgusJson     = d._raw_argus || null;
   clusterLocations = d._cluster_locations || {};
+  clusterOverlays  = new Set((d._cluster_overlays || []).map(String));
 
   frameIndexMap = {};
   const hasIdx = d.detections.every(det => det.frame_index != null);
@@ -821,6 +840,7 @@ function selectCluster(cid) {
     .map(k=>{const l=getCluster(k).find(d=>d.label)?.label||'';const n=getCluster(k).length;return`<option value="${k}">${+k===-1?'noise':'C'+k}${l?' · '+l:''} (${n})</option>`;}).join('');
 
   renderLocationUI(cid);
+  renderOverlayUI(cid);
   renderDetailGrid(cid);
 }
 
@@ -828,12 +848,14 @@ function selectCluster(cid) {
    LOCATION UI
 ═══════════════════════════════════════════════════════════ */
 function renderLocationUI(cid) {
-  const loc        = clusterLocations[String(cid)] || '';
-  const currentEl  = document.getElementById('loc-current');
-  const inputEl    = document.getElementById('loc-input');
-  const clearBtn   = document.getElementById('loc-clear-btn');
+  const loc       = clusterLocations[String(cid)] || '';
+  const isOverlay = clusterOverlays.has(String(cid));
+  const currentEl = document.getElementById('loc-current');
+  const inputEl   = document.getElementById('loc-input');
+  const clearBtn  = document.getElementById('loc-clear-btn');
+  const setBtn    = document.querySelector('.loc-set-btn');
   if (!currentEl) return;
-  if (loc) {
+  if (loc && !isOverlay) {
     currentEl.style.display = 'block';
     currentEl.innerHTML = `<span class="loc-badge">📍 ${loc}</span>`;
     inputEl.value = loc;
@@ -843,10 +865,38 @@ function renderLocationUI(cid) {
     inputEl.value = '';
     clearBtn.style.display = 'none';
   }
+  // Disable location input when overlay is active
+  inputEl.disabled = isOverlay;
+  if (setBtn) setBtn.disabled = isOverlay;
+  inputEl.placeholder = isOverlay
+    ? 'disabled — digital overlay is on'
+    : 'e.g. baseline_apron, pole_pad …';
+}
+
+function renderOverlayUI(cid) {
+  const isOn  = clusterOverlays.has(String(cid));
+  const toggle = document.getElementById('overlay-toggle');
+  const badge  = document.getElementById('overlay-badge');
+  if (toggle) toggle.checked = isOn;
+  if (badge)  badge.style.display = isOn ? 'inline-block' : 'none';
+}
+
+function setClusterOverlay(cid, isOn) {
+  if (!cid) return;
+  if (isOn) {
+    clusterOverlays.add(String(cid));
+    // Clear location assignment — overlay and location are mutually exclusive
+    delete clusterLocations[String(cid)];
+  } else {
+    clusterOverlays.delete(String(cid));
+  }
+  renderOverlayUI(cid);
+  renderLocationUI(cid);
 }
 
 function setClusterLocation() {
   if (!selectedCluster) return;
+  if (clusterOverlays.has(String(selectedCluster))) return; // blocked by overlay
   const val = document.getElementById('loc-input').value.trim();
   if (!val) return;
   clusterLocations[String(selectedCluster)] = val;
@@ -1819,6 +1869,7 @@ function exportEnriched() {
     n_labeled: data.detections.filter(d=>d.label_status!=='unlabeled').length,
     merge_suggestions: mergeSuggestions,
     _cluster_locations: clusterLocations,
+    _cluster_overlays: [...clusterOverlays],
     detections: data.detections.map(det=>({
       detection_id: det.detection_id, frame_id: det.frame_id,
       frame_index: frameIndexMap[det.frame_id]??null,
@@ -1859,11 +1910,18 @@ function exportArgus() {
 
   let outputJson;
 
-  // Build location map: detection_id → locationClass for eligible detections
+  // Build sets of detection_ids that belong to overlay clusters
+  const overlayDetIds = new Set();
+  data.detections.forEach(det => {
+    if (clusterOverlays.has(String(det.cluster_id))) overlayDetIds.add(det.detection_id);
+  });
+
+  // Build location map: detection_id → locationClass for eligible detections (skip overlay clusters)
   const locationMap = {};
   data.detections.forEach(det => {
     const loc = clusterLocations[String(det.cluster_id)];
     if (!loc) return;
+    if (clusterOverlays.has(String(det.cluster_id))) return; // overlay trumps location
     // LOGO always eligible; TEXT only if accepted (will be promoted to LOGO)
     if (det.type === 'LOGO' || (det.type === 'TEXT' && det.label_status === 'accepted')) {
       locationMap[det.detection_id] = loc;
@@ -1874,15 +1932,18 @@ function exportArgus() {
     frames.forEach(frame => {
       const toAdd = [];
       (frame.detections || []).forEach(det => {
+        // --- Overlay detections: set overlay=true, clear locations link ---
+        if (overlayDetIds.has(det.id)) {
+          det.overlay = true;
+          det.locations = []; // remove link only — don't touch the LOCATION detection itself
+          det.isManuallyEdited = true;
+          det.edit_timestamp = ts;
+          return;
+        }
         const locClass = locationMap[det.id];
         if (!locClass) return;
         // Skip if already has this location
         if ((det.locations || []).some(l => l.class === locClass)) return;
-        // Mark old linked LOCATION detections as deleted
-        (det.locations || []).forEach(locRef => {
-          const old = frame.detections.find(d => d.id === locRef.id);
-          if (old) { old.isDeleted = true; old.edit_timestamp = ts; }
-        });
         // Create new LOCATION detection cloned from LOGO bbox
         const newId = crypto.randomUUID();
         toAdd.push({
@@ -1894,7 +1955,7 @@ function exportArgus() {
           confidence: 1.0, manualSource: 'ClusterModeration',
           isDeleted: false, isManuallyEdited: true, edit_timestamp: ts,
         });
-        // Link new LOCATION to this detection
+        // Link new LOCATION to this detection (replace existing links)
         det.locations = [{ id: newId, class: locClass, manualSource: 'ClusterModeration' }];
         det.isManuallyEdited = true;
         det.edit_timestamp = ts;
@@ -1949,8 +2010,10 @@ function exportArgus() {
     has_original_task_json: !!rawArgusJson,
     labels_applied: Object.keys(labelMap).length,
     locations_applied: Object.keys(locationMap).length,
+    overlays_applied: overlayDetIds.size,
     label_map: data.detections.reduce((acc,det)=>{ if(det.label&&det.label_status==='accepted'){acc[det.label]=(acc[det.label]||0)+1}; return acc; }, {}),
     location_map: clusterLocations,
+    overlay_clusters: [...clusterOverlays],
   };
 
   dl(JSON.stringify(outputJson,null,2), `argus_labeled_${(data.task_id||'export').substring(0,8)}.json`);
